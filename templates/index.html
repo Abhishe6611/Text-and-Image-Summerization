@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lumina | AI Text Synthesizer</title>
+    <meta name="description" content="Lumina — an AI-powered multimodal synthesizer using NVIDIA Kimi K2.5. Upload text, documents, images, or video for intelligent analysis.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800;900&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <style>
+        /* ═══════════════════════════════════════════════════
+           WARM DARK CLAYMORPHISM
+           ═══════════════════════════════════════════════════ */
+        :root {
+            --clay-bg: #1a1410;
+            --clay-surface: #252019;
+            --clay-surface-deep: #1e1912;
+            --accent-amber: #d4a24a;
+            --accent-amber-deep: #bf8a2e;
+            --accent-green: #76b900;
+            --accent-coral: #e8837c;
+            --text-main: #f0e6d6;
+            --text-mid: #c4b49a;
+            --text-dim: #8a7d6a;
+            --text-on-accent: #1a1410;
+            --shadow-outer:
+                8px 8px 16px rgba(0,0,0,0.6),
+                -8px -8px 16px rgba(60,50,35,0.35);
+            --shadow-inner:
+                inset 4px 4px 8px rgba(0,0,0,0.45),
+                inset -4px -4px 8px rgba(60,50,35,0.25);
+            --shadow-btn:
+                6px 6px 12px rgba(0,0,0,0.5),
+                -6px -6px 12px rgba(60,50,35,0.3),
+                inset 0 2px 4px rgba(80,65,40,0.3);
+            --shadow-btn-press:
+                inset 4px 4px 10px rgba(0,0,0,0.5),
+                inset -4px -4px 10px rgba(60,50,35,0.2);
+            --r-xl: 32px; --r-lg: 24px; --r-md: 18px; --r-sm: 14px; --r-pill: 100px;
+        }
+        *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+
+        body {
+            min-height:100vh; font-family:'DM Sans',sans-serif; background:var(--clay-bg);
+            color:var(--text-main); display:flex; justify-content:center; align-items:flex-start;
+            padding:40px 24px; overflow-x:hidden;
+        }
+        body::before,body::after {
+            content:''; position:fixed; border-radius:50%; filter:blur(100px);
+            opacity:0.3; z-index:-1; animation:blobF 20s ease-in-out infinite alternate;
+        }
+        body::before { width:500px;height:500px; background:radial-gradient(circle,rgba(212,162,74,0.25),transparent 70%); top:-100px;left:-80px; }
+        body::after { width:450px;height:450px; background:radial-gradient(circle,rgba(191,138,46,0.18),transparent 70%); bottom:-120px;right:-60px; animation-delay:-8s; }
+        @keyframes blobF { 0%{transform:translate(0,0) scale(1)} 100%{transform:translate(30px,-20px) scale(1.08)} }
+
+        .app{width:100%;max-width:1400px;display:flex;flex-direction:column;gap:36px;animation:rise .7s cubic-bezier(.22,1,.36,1) forwards;}
+        @keyframes rise{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}}
+
+        /* ── Header ── */
+        header{text-align:center;display:flex;flex-direction:column;align-items:center;gap:8px;}
+        .pill{display:inline-flex;align-items:center;gap:8px;background:var(--clay-surface);padding:8px 20px;border-radius:var(--r-pill);font-size:.85rem;font-weight:600;color:var(--text-mid);box-shadow:var(--shadow-btn);}
+        .pill .nv{color:var(--accent-green);font-family:'Nunito',sans-serif;font-weight:800;display:inline-flex;align-items:center;gap:5px;transition:all .4s;position:relative;min-width:80px;}
+        .pill .nv .model-name{display:inline-block;transition:opacity .3s,transform .3s;}
+        .pill .nv .model-name.switching{opacity:0;transform:translateY(-6px);}
+        .pill .nv .model-loader{display:none;width:14px;height:14px;border:2px solid rgba(118,185,0,0.2);border-top-color:var(--accent-green);border-radius:50%;animation:mspin .6s linear infinite;}
+        .pill .nv.loading .model-loader{display:inline-block;}
+        .pill .nv.loading .model-name{opacity:0;width:0;overflow:hidden;}
+        @keyframes mspin{to{transform:rotate(360deg)}}
+        h1{font-family:'Nunito',sans-serif;font-size:3.8rem;font-weight:900;color:var(--text-main);letter-spacing:-1.5px;line-height:1;text-shadow:2px 2px 4px rgba(0,0,0,0.5),-1px -1px 2px rgba(60,50,35,0.4);}
+        header p{font-size:1.05rem;color:var(--text-dim);font-weight:500;}
+
+        /* ── Grid ── */
+        .grid{display:grid;grid-template-columns:1fr 1.15fr;gap:28px;height:70vh;min-height:500px;}
+        @media(max-width:960px){.grid{grid-template-columns:1fr}h1{font-size:2.5rem}}
+
+        /* ── Panel ── */
+        .panel{background:var(--clay-surface);border-radius:var(--r-xl);padding:32px;box-shadow:var(--shadow-outer);display:flex;flex-direction:column;gap:20px;animation:rise .7s cubic-bezier(.22,1,.36,1) forwards;opacity:0;animation-delay:.15s;max-height:100%;overflow:hidden;}
+        .panel:nth-child(2){animation-delay:.3s}
+
+        .ph{display:flex;justify-content:space-between;align-items:center;flex-shrink:0;}
+        .pl{font-family:'Nunito',sans-serif;font-size:1.2rem;font-weight:800;color:var(--text-main);display:flex;align-items:center;gap:10px;margin:0;}
+        .ib{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:14px;background:linear-gradient(135deg,var(--accent-amber),var(--accent-amber-deep));color:var(--text-on-accent);font-size:.95rem;box-shadow:4px 4px 8px rgba(0,0,0,0.4),-2px -2px 6px rgba(60,50,35,0.3),inset 0 2px 3px rgba(255,220,150,0.2);}
+
+        /* ── Textarea ── */
+        .iw{flex-grow:1;display:flex;flex-direction:column;min-height:0;}
+        textarea{flex-grow:1;width:100%;background:var(--clay-surface-deep);border:none;border-radius:var(--r-lg);padding:24px;color:var(--text-main);font-family:'DM Sans',sans-serif;font-size:1.05rem;line-height:1.6;resize:none;box-shadow:var(--shadow-inner);transition:box-shadow .3s;overflow-y:auto;}
+        textarea::placeholder{color:var(--text-dim)}
+        textarea:focus{outline:none;box-shadow:inset 5px 5px 12px rgba(0,0,0,0.5),inset -5px -5px 12px rgba(60,50,35,0.2),0 0 0 3px rgba(212,162,74,0.15);}
+
+        /* ── Media Preview Strip ── */
+        .media-strip{display:flex;gap:10px;flex-wrap:wrap;flex-shrink:0;max-height:110px;overflow-y:auto;}
+        .media-strip:empty{display:none}
+        .media-thumb{position:relative;width:80px;height:80px;border-radius:var(--r-sm);overflow:hidden;box-shadow:var(--shadow-inner);flex-shrink:0;}
+        .media-thumb img,.media-thumb video{width:100%;height:100%;object-fit:cover;}
+        .media-thumb .remove-media{position:absolute;top:4px;right:4px;width:22px;height:22px;border-radius:50%;background:rgba(0,0,0,0.7);color:#fff;border:none;font-size:.7rem;cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:0;transition:.2s;}
+        .media-thumb:hover .remove-media{opacity:1}
+
+        /* ── File Status ── */
+        .fst{display:flex;align-items:center;justify-content:center;gap:8px;font-size:.85rem;font-weight:600;color:var(--text-dim);flex-shrink:0;padding-top:4px;transition:color .3s;}
+        .fst.has-file{color:var(--accent-green)}
+
+        /* ── Buttons ── */
+        .cbar{display:flex;gap:16px;flex-shrink:0;}
+        .cb{font-family:'Nunito',sans-serif;font-weight:700;font-size:1.05rem;border:none;border-radius:var(--r-md);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:10px;transition:all .25s cubic-bezier(.22,1,.36,1);position:relative;}
+        .cb2{flex:1;background:var(--clay-surface);color:var(--text-mid);padding:16px 20px;box-shadow:var(--shadow-btn);}
+        .cb2:hover{transform:translateY(-2px);box-shadow:8px 8px 16px rgba(0,0,0,0.55),-8px -8px 16px rgba(60,50,35,0.35),inset 0 2px 5px rgba(80,65,40,0.3);}
+        .cb2:active{transform:translateY(0);box-shadow:var(--shadow-btn-press);}
+        .cb1{flex:2;background:linear-gradient(135deg,#d4a24a 0%,#bf8a2e 100%);color:var(--text-on-accent);padding:16px 28px;box-shadow:6px 6px 14px rgba(0,0,0,0.5),-4px -4px 10px rgba(60,50,35,0.3),inset 0 2px 4px rgba(255,220,150,0.25);}
+        .cb1:hover:not(:disabled){transform:translateY(-3px);box-shadow:8px 8px 18px rgba(0,0,0,0.6),-6px -6px 14px rgba(60,50,35,0.35),inset 0 3px 6px rgba(255,220,150,0.3);}
+        .cb1:active:not(:disabled){transform:translateY(0);box-shadow:inset 4px 4px 10px rgba(0,0,0,0.5),inset -3px -3px 8px rgba(60,50,35,0.2);}
+        .cb1:disabled{opacity:.5;cursor:not-allowed;transform:none;}
+
+        /* ── Status Badge ── */
+        .stag{display:inline-flex;align-items:center;gap:8px;padding:7px 16px;border-radius:var(--r-pill);font-size:.8rem;font-weight:700;font-family:'Nunito',sans-serif;transition:all .35s;}
+        .pdot{width:8px;height:8px;border-radius:50%;background:currentColor;flex-shrink:0;}
+        .t-idle{background:var(--clay-surface-deep);color:var(--text-dim);box-shadow:var(--shadow-inner);}
+        .t-proc{background:rgba(212,162,74,0.1);color:var(--accent-amber);box-shadow:inset 2px 2px 6px rgba(212,162,74,0.15),inset -2px -2px 6px rgba(60,50,35,0.2);}
+        .t-proc .pdot{animation:dp 1.4s infinite ease-in-out}
+        @keyframes dp{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.7)}}
+        .t-ok{background:rgba(118,185,0,0.1);color:var(--accent-green);box-shadow:inset 2px 2px 6px rgba(118,185,0,0.12),inset -2px -2px 6px rgba(60,50,35,0.15);}
+        .t-ok .pdot{box-shadow:0 0 8px rgba(118,185,0,0.5)}
+        .t-err{background:rgba(232,131,124,0.1);color:var(--accent-coral);box-shadow:inset 2px 2px 6px rgba(232,131,124,0.12),inset -2px -2px 6px rgba(60,50,35,0.15);}
+
+        /* ── Output ── */
+        .ow{flex-grow:1;display:flex;flex-direction:column;min-height:0;position:relative;}
+        .sw{flex-grow:1;background:var(--clay-surface-deep);border-radius:var(--r-lg);padding:24px;box-shadow:var(--shadow-inner);overflow-y:auto;position:relative;}
+        #summaryText{font-size:1.05rem;line-height:1.75;color:var(--text-main);}
+        #summaryText h1,#summaryText h2,#summaryText h3{font-family:'Nunito',sans-serif;color:var(--text-main);font-weight:800;margin-top:1.2em;margin-bottom:.5em;}
+        #summaryText p{margin:0 0 1.1em 0}
+        #summaryText strong{color:var(--text-main);font-weight:700}
+        #summaryText ul,#summaryText ol{padding-left:1.5em;margin-bottom:1em}
+        #summaryText li{margin-bottom:.4em}
+
+        .es{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--text-dim);transition:opacity .4s,transform .4s;pointer-events:none;}
+        .es.hidden{opacity:0;transform:scale(.95)}
+        .es .ei{width:64px;height:64px;border-radius:20px;background:var(--clay-surface);display:flex;align-items:center;justify-content:center;font-size:1.6rem;color:var(--text-dim);box-shadow:var(--shadow-btn);}
+        .es p{font-size:.95rem;font-weight:500;max-width:240px;text-align:center;line-height:1.5;}
+
+        /* ── Thinking Animation (Organic Glow) ── */
+        .thinking-state{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;opacity:0;pointer-events:none;transition:opacity .6s ease;z-index:5;}
+        .thinking-state.active{opacity:1;pointer-events:auto;}
+        
+        .think-orb{width:76px;height:76px;border-radius:26px;background:var(--clay-surface-deep);box-shadow:var(--shadow-inner);display:flex;align-items:center;justify-content:center;position:relative;}
+        .think-orb i{font-size:2rem;color:var(--accent-amber);animation:brainFloat 3.5s ease-in-out infinite;z-index:2;}
+        
+        /* Soft, glowing ambient back-pulse */
+        .think-orb::before{content:'';position:absolute;inset:0;border-radius:26px;background:rgba(212,162,74,0.15);filter:blur(8px);z-index:1;animation:ambientPuff 2.5s ease-in-out infinite alternate;}
+        
+        /* Radiating outward ripple */
+        .think-orb::after{content:'';position:absolute;inset:0;border-radius:26px;border:1px solid rgba(212,162,74,0.4);z-index:1;animation:rippleSoft 2.5s cubic-bezier(0.2, 0.6, 0.3, 1) infinite;}
+
+        @keyframes brainFloat{0%,100%{transform:translateY(0) scale(1);opacity:0.85;filter:drop-shadow(0 2px 4px rgba(0,0,0,0.4))}50%{transform:translateY(-5px) scale(1.03);opacity:1;filter:drop-shadow(0 5px 10px rgba(212,162,74,0.6))}}
+        @keyframes ambientPuff{0%{transform:scale(0.85);opacity:0.4}100%{transform:scale(1.2);opacity:1}}
+        @keyframes rippleSoft{0%{transform:scale(1);opacity:0.8}100%{transform:scale(1.65);opacity:0}}
+        
+        .think-text{font-family:'Nunito',sans-serif;font-size:1.05rem;font-weight:700;color:var(--text-main);text-align:center;text-shadow:0 2px 4px rgba(0,0,0,0.5);}
+        .think-dots{display:inline-flex;gap:5px;margin-left:6px;}
+        .think-dots span{width:5px;height:5px;border-radius:50%;background:var(--accent-amber);animation:dotWave 1.5s ease-in-out infinite;}
+        .think-dots span:nth-child(2){animation-delay:.2s}
+        .think-dots span:nth-child(3){animation-delay:.4s}
+        @keyframes dotWave{0%,100%{transform:translateY(0);opacity:0.3}50%{transform:translateY(-5px);opacity:1;box-shadow:0 2px 6px rgba(212,162,74,0.8)}}
+        .think-sub{font-size:.85rem;color:var(--text-mid);font-weight:500;margin-top:-10px;transition:opacity .4s ease;}
+
+        .sw::-webkit-scrollbar{width:8px}
+        .sw::-webkit-scrollbar-track{background:transparent;margin:8px}
+        .sw::-webkit-scrollbar-thumb{background:rgba(212,162,74,0.2);border-radius:10px}
+        .sw::-webkit-scrollbar-thumb:hover{background:rgba(212,162,74,0.35)}
+
+        /* ── Export ── */
+        .ebar{display:flex;align-items:center;justify-content:space-between;padding-top:20px;flex-shrink:0;opacity:0;transform:translateY(8px);pointer-events:none;transition:all .4s cubic-bezier(.22,1,.36,1);}
+        .ebar.visible{opacity:1;transform:translateY(0);pointer-events:auto}
+        .elbl{font-family:'Nunito',sans-serif;font-size:.9rem;font-weight:700;color:var(--text-dim);display:flex;align-items:center;gap:8px;}
+        .ebtns{display:flex;gap:10px}
+        .eb{font-family:'Nunito',sans-serif;font-weight:700;font-size:.85rem;background:var(--clay-surface);border:none;color:var(--text-mid);padding:10px 18px;border-radius:var(--r-sm);cursor:pointer;display:inline-flex;align-items:center;gap:8px;box-shadow:4px 4px 8px rgba(0,0,0,0.4),-4px -4px 8px rgba(60,50,35,0.25),inset 0 1px 2px rgba(80,65,40,0.2);transition:all .25s cubic-bezier(.22,1,.36,1);}
+        .eb:hover{transform:translateY(-2px);color:var(--accent-amber);box-shadow:6px 6px 12px rgba(0,0,0,0.45),-6px -6px 12px rgba(60,50,35,0.3),inset 0 2px 4px rgba(80,65,40,0.25);}
+        .eb:active{transform:translateY(0);box-shadow:var(--shadow-btn-press)}
+
+        footer{text-align:center;font-size:.8rem;color:var(--text-dim);padding-top:10px;font-weight:500;}
+
+        /* ── History Toggle Button ── */
+        .hist-toggle{position:fixed;top:24px;right:24px;z-index:200;width:48px;height:48px;border-radius:16px;background:var(--clay-surface);border:none;color:var(--text-mid);font-size:1.1rem;cursor:pointer;box-shadow:var(--shadow-btn);transition:all .25s cubic-bezier(.22,1,.36,1);display:flex;align-items:center;justify-content:center;}
+        .hist-toggle:hover{transform:translateY(-2px);color:var(--accent-amber);}
+        .hist-toggle .badge-count{position:absolute;top:-4px;right:-4px;background:var(--accent-amber);color:var(--text-on-accent);font-size:.65rem;font-weight:800;font-family:'Nunito',sans-serif;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;opacity:0;transform:scale(0);transition:.3s;}
+        .hist-toggle .badge-count.show{opacity:1;transform:scale(1);}
+
+        /* ── History Drawer ── */
+        .hist-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:300;opacity:0;pointer-events:none;transition:opacity .35s;}
+        .hist-overlay.open{opacity:1;pointer-events:auto;}
+        .hist-drawer{position:fixed;top:0;right:0;width:400px;max-width:90vw;height:100vh;background:var(--clay-surface);z-index:310;box-shadow:-8px 0 24px rgba(0,0,0,0.5);display:flex;flex-direction:column;transform:translateX(100%);transition:transform .4s cubic-bezier(.22,1,.36,1);}
+        .hist-drawer.open{transform:translateX(0);}
+
+        .hist-head{padding:28px 24px 20px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid rgba(255,255,255,0.05);flex-shrink:0;}
+        .hist-title{font-family:'Nunito',sans-serif;font-size:1.3rem;font-weight:800;color:var(--text-main);display:flex;align-items:center;gap:10px;}
+        .hist-title i{color:var(--accent-amber);}
+        .hist-close{background:var(--clay-surface-deep);border:none;color:var(--text-mid);width:36px;height:36px;border-radius:12px;cursor:pointer;font-size:.9rem;display:flex;align-items:center;justify-content:center;box-shadow:var(--shadow-inner);transition:.2s;}
+        .hist-close:hover{color:var(--accent-coral);}
+        .hist-clear{background:none;border:1px solid rgba(232,131,124,0.2);color:var(--accent-coral);padding:6px 14px;border-radius:var(--r-sm);font-family:'Nunito',sans-serif;font-size:.8rem;font-weight:700;cursor:pointer;transition:.2s;}
+        .hist-clear:hover{background:rgba(232,131,124,0.1);}
+
+        .hist-list{flex-grow:1;overflow-y:auto;padding:16px 24px;display:flex;flex-direction:column;gap:12px;}
+        .hist-list::-webkit-scrollbar{width:6px}
+        .hist-list::-webkit-scrollbar-thumb{background:rgba(212,162,74,0.15);border-radius:10px}
+
+        .hist-card{background:var(--clay-surface-deep);border-radius:var(--r-md);padding:16px;box-shadow:var(--shadow-inner);cursor:pointer;transition:all .2s;display:flex;flex-direction:column;gap:8px;}
+        .hist-card:hover{box-shadow:inset 3px 3px 6px rgba(0,0,0,0.35),inset -3px -3px 6px rgba(60,50,35,0.2);}
+        .hist-card-head{display:flex;justify-content:space-between;align-items:center;}
+        .hist-card-time{font-size:.75rem;color:var(--text-dim);font-weight:600;}
+        .hist-card-type{font-size:.7rem;font-weight:700;font-family:'Nunito',sans-serif;padding:3px 10px;border-radius:var(--r-pill);}
+        .hist-card-type.text-type{background:rgba(212,162,74,0.1);color:var(--accent-amber);}
+        .hist-card-type.media-type{background:rgba(118,185,0,0.1);color:var(--accent-green);}
+        .hist-card-input{font-size:.85rem;color:var(--text-mid);line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+        .hist-card-output{font-size:.8rem;color:var(--text-dim);line-height:1.4;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;border-top:1px solid rgba(255,255,255,0.03);padding-top:8px;}
+        .hist-empty{text-align:center;color:var(--text-dim);font-size:.95rem;padding:40px 20px;display:flex;flex-direction:column;align-items:center;gap:12px;}
+        .hist-empty i{font-size:2rem;opacity:.5;}
+    </style>
+</head>
+<body>
+    <!-- History Toggle -->
+    <button class="hist-toggle" onclick="toggleHistory()" title="Summarization History">
+        <i class="fa-solid fa-clock-rotate-left"></i>
+        <span id="histBadge" class="badge-count">0</span>
+    </button>
+
+    <!-- History Overlay + Drawer -->
+    <div id="histOverlay" class="hist-overlay" onclick="toggleHistory()"></div>
+    <aside id="histDrawer" class="hist-drawer">
+        <div class="hist-head">
+            <div class="hist-title"><i class="fa-solid fa-clock-rotate-left"></i> History</div>
+            <div style="display:flex;gap:8px;align-items:center;">
+                <button class="hist-clear" onclick="clearHistory()"><i class="fa-solid fa-trash-can"></i> Clear</button>
+                <button class="hist-close" onclick="toggleHistory()"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+        </div>
+        <div id="histList" class="hist-list"></div>
+    </aside>
+
+    <div class="app">
+        <header>
+            <div class="pill">
+                Intelligent Text Engine
+                <span class="nv" id="modelBadge"><i class="fa-solid fa-microchip"></i> <span class="model-name" id="modelName">NVIDIA dracarys</span><span class="model-loader"></span></span>
+            </div>
+            <h1>Lumina</h1>
+            <p>Text, documents, images, video — AI distills the essence.</p>
+        </header>
+
+        <main class="grid">
+            <!-- ── Input Panel ── -->
+            <section class="panel">
+                <div class="ph">
+                    <h2 class="pl"><span class="ib"><i class="fa-solid fa-pen-nib"></i></span> Source Material</h2>
+                </div>
+                <div class="iw">
+                    <textarea id="inputText" placeholder="Type or paste your text here to analyze..."></textarea>
+                </div>
+                <div id="mediaPreview" class="media-strip"></div>
+                <div id="fileStatusContainer" class="fst">
+                    <i class="fa-solid fa-file-circle-check"></i>
+                    <span id="fileName">No files attached</span>
+                </div>
+                <div class="cbar">
+                    <label for="fileInput" class="cb cb2" title="Attach files">
+                        <i class="fa-solid fa-paperclip"></i>
+                        <span id="btnLabelText">Attach</span>
+                    </label>
+                    <input type="file" id="fileInput" multiple accept=".txt,.pdf,.docx,.png,.jpg,.jpeg,.gif,.webp,.mp4,.webm" style="display:none;" onchange="handleFiles()">
+                    <button id="summarizeBtn" class="cb cb1" onclick="summarizeText()">
+                        <i class="fa-solid fa-wand-magic-sparkles"></i> Synthesize
+                    </button>
+                </div>
+            </section>
+
+            <!-- ── Output Panel ── -->
+            <section class="panel">
+                <div class="ph">
+                    <h2 class="pl"><span class="ib"><i class="fa-solid fa-layer-group"></i></span> Neural Output</h2>
+                    <div id="statusBadge" class="stag t-idle">
+                        <span class="pdot"></span>
+                        <span id="statusText">Awaiting Input</span>
+                    </div>
+                </div>
+                <div class="ow">
+                    <div class="sw">
+                        <div id="placeholder" class="es">
+                            <div class="ei"><i class="fa-solid fa-cube"></i></div>
+                            <p>Distilled intelligence will appear here.</p>
+                        </div>
+                        <div id="thinkingState" class="thinking-state">
+                            <div class="think-orb"><i class="fa-solid fa-brain"></i></div>
+                            <div class="think-text"><span id="thinkMsg">Model is thinking</span><span class="think-dots"><span></span><span></span><span></span></span></div>
+                            <div class="think-sub" id="thinkSub">Analyzing input data</div>
+                        </div>
+                        <div id="summaryText"></div>
+                    </div>
+                </div>
+                <div id="downloadBar" class="ebar">
+                    <div class="elbl"><i class="fa-solid fa-download"></i> Export</div>
+                    <div class="ebtns">
+                        <button class="eb" onclick="exportFile('txt')"><i class="fa-solid fa-file-lines"></i> TXT</button>
+                        <button class="eb" onclick="exportFile('pdf')"><i class="fa-solid fa-file-pdf"></i> PDF</button>
+                        <button class="eb" onclick="exportFile('docx')"><i class="fa-solid fa-file-word"></i> DOCX</button>
+                    </div>
+                </div>
+            </section>
+        </main>
+        <footer>Powered by Lumina Engine — Built with care.</footer>
+    </div>
+
+    <script>
+        window.currentSummaryText = "";
+        window.selectedFiles = [];
+
+        const IMG_EXT = ['png','jpg','jpeg','gif','webp'];
+        const VID_EXT = ['mp4','webm'];
+        const DOC_EXT = ['txt','pdf','docx'];
+        const ALLOWED_EXT = [...IMG_EXT, ...VID_EXT, ...DOC_EXT];
+
+        function getExt(name) { return name.split('.').pop().toLowerCase(); }
+
+        /* ── Handle file selection ── */
+        window.handleFiles = function() {
+            const input = document.getElementById('fileInput');
+
+            if (input.files.length === 0) return;
+
+            let invalidFiles = [];
+            for (const f of input.files) {
+                const ext = getExt(f.name);
+                if (ALLOWED_EXT.includes(ext)) {
+                    window.selectedFiles.push(f);
+                } else {
+                    invalidFiles.push(f.name);
+                }
+            }
+            
+            if (invalidFiles.length > 0) {
+                alert(`Unsupported format: ${invalidFiles.join(', ')}.\nOnly .txt, .pdf, .docx, images, and video are supported.`);
+            }
+
+            input.value = ''; // Reset input to allow re-selecting the same file if needed
+            updateFileUI();
+        };
+
+        function updateFileUI() {
+            const preview = document.getElementById('mediaPreview');
+            const fName = document.getElementById('fileName');
+            const stCont = document.getElementById('fileStatusContainer');
+            const btnLbl = document.getElementById('btnLabelText');
+
+            preview.innerHTML = '';
+            const files = window.selectedFiles;
+
+            if (files.length === 0) {
+                fName.innerText = 'No files attached';
+                stCont.classList.remove('has-file');
+                btnLbl.innerText = 'Attach';
+                return;
+            }
+
+            let mediaCount = 0;
+            let docCount = 0;
+
+            files.forEach((f, idx) => {
+                const ext = getExt(f.name);
+                if (IMG_EXT.includes(ext)) {
+                    mediaCount++;
+                    const thumb = document.createElement('div');
+                    thumb.className = 'media-thumb';
+                    const img = document.createElement('img');
+                    img.src = URL.createObjectURL(f);
+                    img.alt = f.name;
+                    thumb.appendChild(img);
+                    addRemoveBtn(thumb, idx);
+                    preview.appendChild(thumb);
+                } else if (VID_EXT.includes(ext)) {
+                    mediaCount++;
+                    const thumb = document.createElement('div');
+                    thumb.className = 'media-thumb';
+                    const vid = document.createElement('video');
+                    vid.src = URL.createObjectURL(f);
+                    vid.muted = true;
+                    vid.addEventListener('loadeddata', () => vid.currentTime = 1);
+                    thumb.appendChild(vid);
+                    addRemoveBtn(thumb, idx);
+                    preview.appendChild(thumb);
+                } else {
+                    docCount++;
+                }
+            });
+
+            const parts = [];
+            if (docCount > 0) parts.push(docCount + ' doc' + (docCount > 1 ? 's' : ''));
+            if (mediaCount > 0) parts.push(mediaCount + ' media');
+            fName.innerText = parts.join(', ') + ' attached';
+            stCont.classList.add('has-file');
+            btnLbl.innerText = 'Add More';
+        }
+
+        function addRemoveBtn(thumb, idx) {
+            const btn = document.createElement('button');
+            btn.className = 'remove-media';
+            btn.innerHTML = '<i class="fa-solid fa-xmark"></i>';
+            btn.onclick = function(e) {
+                e.preventDefault();
+                window.selectedFiles.splice(idx, 1);
+                updateFileUI();
+            };
+            thumb.appendChild(btn);
+        }
+
+        /* ── Status update ── */
+        window.updateStatus = function(state, text) {
+            const badge = document.getElementById('statusBadge');
+            const stTxt = document.getElementById('statusText');
+            badge.className = 'stag';
+            if (state === 'idle') badge.classList.add('t-idle');
+            else if (state === 'processing') badge.classList.add('t-proc');
+            else if (state === 'success') badge.classList.add('t-ok');
+            else if (state === 'error') badge.classList.add('t-err');
+            stTxt.innerText = text;
+        };
+
+        /* ── Main Synthesize ── */
+        window.summarizeText = async function() {
+            const text = document.getElementById('inputText').value;
+            const files = window.selectedFiles;
+            const sumBtn = document.getElementById('summarizeBtn');
+            const sumTxt = document.getElementById('summaryText');
+            const ph = document.getElementById('placeholder');
+            const dlBar = document.getElementById('downloadBar');
+
+            if (!text.trim() && files.length === 0) {
+                alert('Please enter text or attach files to analyze.');
+                return;
+            }
+
+            sumBtn.disabled = true;
+            ph.classList.add('hidden');
+            sumTxt.innerHTML = '';
+            window.currentSummaryText = '';
+            dlBar.classList.remove('visible');
+
+            // Detect model and animate badge
+            const hasMedia = files.some(f => {
+                const ext = f.name.split('.').pop().toLowerCase();
+                return IMG_EXT.includes(ext) || VID_EXT.includes(ext);
+            });
+            switchModel(hasMedia ? 'NVIDIA Kimi K2.5' : 'NVIDIA dracarys');
+            updateStatus('processing', 'Connecting...');
+
+            // Show thinking animation
+            showThinking(hasMedia);
+
+            try {
+                const formData = new FormData();
+                if (text.trim()) formData.append('text', text);
+                files.forEach(f => formData.append('files', f));
+
+                updateStatus('processing', 'Synthesizing...');
+                const response = await fetch('/summarize', { method: 'POST', body: formData });
+
+                if (response.ok) {
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder('utf-8');
+                    let done = false, fullText = "", firstChunk = true;
+
+                    while (!done) {
+                        const { value, done: rd } = await reader.read();
+                        done = rd;
+                        if (value) {
+                            if (firstChunk) { hideThinking(); firstChunk = false; }
+                            fullText += decoder.decode(value, { stream: true });
+                            window.currentSummaryText = fullText;
+                            sumTxt.innerHTML = marked.parse(fullText);
+                            const well = sumTxt.closest('.sw');
+                            if (well) well.scrollTop = well.scrollHeight;
+                        }
+                    }
+                    updateStatus('success', 'Complete');
+                    dlBar.classList.add('visible');
+
+                    // Save to history
+                    saveToHistory(text, fullText, files.length > 0);
+
+                    // Clear input
+                    document.getElementById('inputText').value = '';
+                    window.selectedFiles = [];
+                    updateFileUI();
+                    document.getElementById('fileInput').value = '';
+                } else {
+                    hideThinking();
+                    const data = await response.json();
+                    sumTxt.innerHTML = '<p style="color:var(--accent-coral)">Error: ' + data.error + '</p>';
+                    updateStatus('error', 'Failed');
+                }
+            } catch (err) {
+                hideThinking();
+                sumTxt.innerHTML = '<p style="color:var(--accent-coral)">Network error: ' + err.message + '</p>';
+                updateStatus('error', 'Connection Lost');
+            } finally {
+                sumBtn.disabled = false;
+            }
+        };
+
+        /* ── Export ── */
+        window.exportFile = async function(format) {
+            const text = window.currentSummaryText;
+            if (!text) return;
+            if (format === 'txt') {
+                const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+                const a = document.createElement('a'); a.href = url; a.download = 'Lumina_Summary.txt'; a.click(); URL.revokeObjectURL(url);
+            } else if (format === 'pdf') {
+                if (typeof html2pdf === 'undefined') return alert('PDF Library loading. Retry.');
+                const div = document.createElement('div'); div.innerHTML = marked.parse(text);
+                div.style.cssText = 'padding:40px;color:#3d2e1a;background:#fff;font-family:"DM Sans",sans-serif;line-height:1.7';
+                html2pdf().set({ margin:.5, filename:'Lumina_Summary.pdf', html2canvas:{scale:2}, jsPDF:{unit:'in',format:'letter',orientation:'portrait'} }).from(div).save();
+            } else if (format === 'docx') {
+                const os = document.getElementById('statusText').innerText;
+                const oc = document.getElementById('statusBadge').className;
+                updateStatus('processing', 'Exporting...');
+                try {
+                    const res = await fetch('/export_docx', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text}) });
+                    if (res.ok) { const url = URL.createObjectURL(await res.blob()); const a = document.createElement('a'); a.href = url; a.download = 'Lumina_Summary.docx'; a.click(); URL.revokeObjectURL(url); }
+                    else alert('API Error generating DOCX.');
+                } catch(e) { alert('Error: ' + e.message); }
+                finally { document.getElementById('statusBadge').className = oc; document.getElementById('statusText').innerText = os; }
+            }
+        };
+
+        /* ── History Functions ── */
+        function getHistory() {
+            try { return JSON.parse(localStorage.getItem('lumina_history') || '[]'); }
+            catch { return []; }
+        }
+        function setHistory(h) {
+            localStorage.setItem('lumina_history', JSON.stringify(h));
+            updateHistoryBadge();
+        }
+
+        function saveToHistory(inputText, outputText, hadMedia) {
+            const history = getHistory();
+            history.unshift({
+                id: Date.now(),
+                input: inputText || (hadMedia ? '[Media uploaded]' : ''),
+                output: outputText,
+                type: hadMedia ? 'media' : 'text',
+                time: new Date().toLocaleString()
+            });
+            if (history.length > 50) history.pop(); // cap at 50
+            setHistory(history);
+        }
+
+        function updateHistoryBadge() {
+            const badge = document.getElementById('histBadge');
+            const count = getHistory().length;
+            badge.innerText = count;
+            badge.classList.toggle('show', count > 0);
+        }
+
+        function toggleHistory() {
+            const overlay = document.getElementById('histOverlay');
+            const drawer = document.getElementById('histDrawer');
+            const isOpen = drawer.classList.contains('open');
+            if (isOpen) {
+                drawer.classList.remove('open');
+                overlay.classList.remove('open');
+            } else {
+                renderHistory();
+                drawer.classList.add('open');
+                overlay.classList.add('open');
+            }
+        }
+
+        function renderHistory() {
+            const list = document.getElementById('histList');
+            const history = getHistory();
+            if (history.length === 0) {
+                list.innerHTML = '<div class="hist-empty"><i class="fa-solid fa-inbox"></i><p>No summaries yet.<br>Your synthesis history will appear here.</p></div>';
+                return;
+            }
+            list.innerHTML = history.map((h, i) => `
+                <div class="hist-card" onclick="loadFromHistory(${i})">
+                    <div class="hist-card-head">
+                        <span class="hist-card-time">${h.time}</span>
+                        <span class="hist-card-type ${h.type === 'media' ? 'media-type' : 'text-type'}">${h.type === 'media' ? 'Media' : 'Text'}</span>
+                    </div>
+                    <div class="hist-card-input">${escHtml(h.input || 'No text input')}</div>
+                    <div class="hist-card-output">${escHtml(h.output.substring(0, 200))}</div>
+                </div>
+            `).join('');
+        }
+
+        function loadFromHistory(idx) {
+            const h = getHistory()[idx];
+            if (!h) return;
+            const sumTxt = document.getElementById('summaryText');
+            const ph = document.getElementById('placeholder');
+            const dlBar = document.getElementById('downloadBar');
+            ph.classList.add('hidden');
+            window.currentSummaryText = h.output;
+            sumTxt.innerHTML = marked.parse(h.output);
+            dlBar.classList.add('visible');
+            updateStatus('success', 'From History');
+            toggleHistory();
+        }
+
+        function clearHistory() {
+            if (!confirm('Clear all history?')) return;
+            setHistory([]);
+            renderHistory();
+        }
+
+        function escHtml(s) {
+            const d = document.createElement('div');
+            d.appendChild(document.createTextNode(s));
+            return d.innerHTML;
+        }
+
+        // Init badge on load
+        updateHistoryBadge();
+
+        /* ── Dynamic Model Badge ── */
+        let currentModel = 'NVIDIA dracarys';
+        function switchModel(newModel) {
+            if (newModel === currentModel) return;
+            currentModel = newModel;
+            const badge = document.getElementById('modelBadge');
+            const nameEl = document.getElementById('modelName');
+
+            // Phase 1: show loader
+            badge.classList.add('loading');
+
+            // Phase 2: after brief loading, swap text
+            setTimeout(() => {
+                nameEl.classList.add('switching');
+                setTimeout(() => {
+                    nameEl.textContent = newModel;
+                    badge.classList.remove('loading');
+                    nameEl.classList.remove('switching');
+                }, 200);
+            }, 400);
+        }
+
+        /* ── Thinking Animation ── */
+        let thinkInterval = null;
+        const THINK_MSGS_TEXT = [
+            ['Processing text', 'Parsing content'],
+            ['Analyzing structure', 'Understanding context'],
+            ['Generating summary', 'Composing response'],
+        ];
+        const THINK_MSGS_MEDIA = [
+            ['Uploading media', 'Encoding data'],
+            ['Analyzing image', 'Processing visual data'],
+            ['Understanding content', 'Extracting features'],
+            ['Model is thinking', 'Generating description'],
+            ['Composing response', 'Almost ready'],
+        ];
+
+        function showThinking(isMedia) {
+            const el = document.getElementById('thinkingState');
+            const msgEl = document.getElementById('thinkMsg');
+            const subEl = document.getElementById('thinkSub');
+            el.classList.add('active');
+
+            const msgs = isMedia ? THINK_MSGS_MEDIA : THINK_MSGS_TEXT;
+            let idx = 0;
+            msgEl.textContent = msgs[0][0];
+            subEl.textContent = msgs[0][1];
+
+            if (thinkInterval) clearInterval(thinkInterval);
+            thinkInterval = setInterval(() => {
+                idx = (idx + 1) % msgs.length;
+                subEl.style.opacity = '0';
+                msgEl.style.opacity = '0';
+                setTimeout(() => {
+                    msgEl.textContent = msgs[idx][0];
+                    subEl.textContent = msgs[idx][1];
+                    msgEl.style.opacity = '1';
+                    subEl.style.opacity = '1';
+                }, 250);
+            }, 2500);
+        };
+
+        function hideThinking() {
+            if (thinkInterval) { clearInterval(thinkInterval); thinkInterval = null; }
+            const el = document.getElementById('thinkingState');
+            el.classList.remove('active');
+        }
+    </script>
+</body>
+</html>
