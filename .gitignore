@@ -62,3 +62,5 @@ pnpm-debug.log*
 ~$*.pptx
 *.tmp
 *.bak
+generate_ppt.py
+*.pptx
