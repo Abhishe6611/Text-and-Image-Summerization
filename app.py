@@ -15,13 +15,13 @@ CORS(app)
 # ── Model 1: Text Summarization (dracarys via OpenAI SDK) ──
 text_client = OpenAI(
     base_url="https://integrate.api.nvidia.com/v1",
-    api_key="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"
+    api_key="Enter your API here"
 )
 TEXT_MODEL = "abacusai/dracarys-llama-3.1-70b-instruct"
 
 # ── Model 2: Image/Video Analysis (Kimi K2.5 via raw requests) ──
 KIMI_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
-KIMI_API_KEY = "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"
+KIMI_API_KEY = "Enter you API here"
 VISION_MODEL = "moonshotai/kimi-k2.5"
 
 # Supported file extensions
