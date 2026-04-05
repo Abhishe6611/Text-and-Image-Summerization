@@ -4,3 +4,5 @@ openai>=1.12.0
 requests
 PyPDF2
 python-docx
+PyMuPDF
+fpdf2

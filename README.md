@@ -1,348 +1,248 @@
-# 🏗️ Lumina AI Text Synthesizer — Architecture Flow & Technical Deep-Dive
+# 📄 DOCUSUM — AI-Powered Document Synthesizer
 
-## Project Overview
+> **Multi-modal, multi-model document intelligence** — Summarize, generate study notes, create flowcharts, and build exam-prep materials from any text, PDF, image, or video input.
 
-**Lumina** is a multimodal AI content synthesizer built on a **Flask + Jinja2** backend and a **single-page HTML/CSS/JS** frontend. It intelligently routes user input to one of two NVIDIA-hosted large language models depending on content type, and streams the AI response back to the browser in real time.
-
----
-
-## High-Level Architecture
-
-```mermaid
-graph TB
-    subgraph Frontend["🖥️ Frontend (Browser)"]
-        UI["Claymorphism UI<br/>index.html"]
-        JS["Client-side JS<br/>(FormData + Fetch API)"]
-        MD["Markdown Renderer<br/>(marked.js)"]
-    end
-
-    subgraph Backend["⚙️ Flask Backend (app.py)"]
-        Router["Input Router<br/>/summarize endpoint"]
-        FP["File Processor<br/>(PDF, DOCX, TXT, Media)"]
-        TD["Text Pipeline<br/>stream_dracarys()"]
-        VD["Vision Pipeline<br/>stream_kimi()"]
-        EX["Export Engine<br/>/export_docx"]
-    end
-
-    subgraph NVIDIA["☁️ NVIDIA API Cloud"]
-        M1["Dracarys LLaMA 3.1 70B<br/>(Text Summarization)"]
-        M2["Kimi K2.5<br/>(Vision + Thinking)"]
-    end
-
-    UI -->|"User Input<br/>(text + files)"| JS
-    JS -->|"POST /summarize<br/>(multipart/form-data)"| Router
-    Router --> FP
-    FP -->|"Text only"| TD
-    FP -->|"Has images/video"| VD
-    TD -->|"OpenAI SDK<br/>streaming"| M1
-    VD -->|"Raw HTTP SSE<br/>streaming"| M2
-    M1 -->|"Token stream"| TD
-    M2 -->|"SSE chunks"| VD
-    TD -->|"Generator yield"| Router
-    VD -->|"Generator yield"| Router
-    Router -->|"Chunked HTTP<br/>text/plain"| JS
-    JS -->|"Parsed Markdown"| MD
-    MD --> UI
-```
+![Neobrutalist UI](https://img.shields.io/badge/UI-Neobrutalism-black?style=for-the-badge&labelColor=ff00ff)
+![React](https://img.shields.io/badge/Frontend-React_+_Vite-blue?style=for-the-badge)
+![Flask](https://img.shields.io/badge/Backend-Flask-green?style=for-the-badge)
+![NVIDIA NIM](https://img.shields.io/badge/AI-NVIDIA_NIM-76B900?style=for-the-badge)
 
 ---
 
-## End-to-End Data Flow
+## ✨ Features
 
-### Step-by-Step Request Lifecycle
+### 🧠 Four Output Modes
+| Mode | Description | Powered By |
+|------|-------------|------------|
+| **📝 Summarize** | Concise text summarization | Dracarys LLaMA 3.1 70B |
+| **📖 Notes** | Structured study notes with headers, bullet points, key definitions | Nemotron Super 49B v1.5 |
+| **🔀 Flowchart** | Live Mermaid.js diagram generation & rendering | Nemotron Super 49B v1.5 |
+| **🎓 Exam Prep** | MCQs, short answers, fill-in-blanks, mnemonics, revision points | Nemotron Super 49B v1.5 |
 
-```mermaid
-sequenceDiagram
-    participant U as 👤 User
-    participant FE as 🖥️ Browser (JS)
-    participant BE as ⚙️ Flask Server
-    participant NV as ☁️ NVIDIA API
+### 🖼️ Multimodal Input
+- **Text** — Paste directly or type in the textarea
+- **Documents** — Upload `.txt`, `.pdf`, `.docx` files
+- **Images** — Upload `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`
+- **Video** — Upload `.mp4`, `.webm`
+- **Scanned PDFs** — Automatically converted to images via PyMuPDF for vision analysis
+- **Multi-file Upload** — Attach multiple files at once
+- **Drag & Drop** — Drop files directly onto the input area
 
-    U->>FE: Types text / attaches files
-    FE->>FE: Detect input type (text vs media)
-    FE->>FE: Switch model badge animation
-    FE->>FE: Show "Thinking" animation
-    FE->>BE: POST /summarize (FormData)
-    BE->>BE: Parse & classify uploaded files
-    
-    alt Text-only Input
-        BE->>NV: OpenAI SDK → Dracarys 70B (stream=True)
-        loop Token-by-token
-            NV-->>BE: Delta token
-            BE-->>FE: Yield chunk (chunked HTTP)
-            FE->>FE: Append to DOM + marked.parse()
-        end
-    else Has Image/Video
-        BE->>BE: Base64-encode media
-        BE->>NV: Raw HTTP POST → Kimi K2.5 (SSE stream)
-        loop SSE events
-            NV-->>BE: data: {chunk JSON}
-            BE-->>FE: Yield content (chunked HTTP)
-            FE->>FE: Append to DOM + marked.parse()
-        end
-    end
+### 🎚️ Difficulty Levels
+Choose from **Simple**, **Intermediate**, or **Advanced** to control the complexity and depth of AI output.
 
-    FE->>FE: Hide thinking, show result
-    FE->>FE: Save to localStorage history
-    U->>FE: (Optional) Export as TXT / PDF / DOCX
-```
+### 📤 Smart Export
+| Mode | Export Options |
+|------|---------------|
+| Summarize / Notes / Exam Prep | **TXT**, **DOCX**, **PDF** |
+| Flowchart | **PNG** (high-res 2x), **PDF** (landscape) |
+
+Plus one-click **Copy to Clipboard** for all modes.
+
+### 🎨 Neobrutalist UI
+- Bold black borders, hard-offset shadows, high-contrast colors
+- Physically interactive buttons (press-down animation)
+- Live streaming output with auto-scroll
+- Progress indicator: **Thinking → Generating → Done ✓**
+- Word count & reading time stats bar
 
 ---
 
-## Core Components
+## 🏗️ Architecture
 
-### 1. 📥 Input Layer — File Processing
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    DOCUSUM Architecture                         │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  ┌──────────────┐         ┌──────────────────────────────────┐ │
+│  │   Frontend    │         │         Flask Backend            │ │
+│  │  React+Vite   │  POST   │                                  │ │
+│  │  TypeScript   │────────▶│  /summarize (mode + difficulty)  │ │
+│  │  Neobrutalism │         │                                  │ │
+│  │  Mermaid.js   │◀────────│  Chunked HTTP Streaming          │ │
+│  └──────────────┘  stream  │                                  │ │
+│                            │  ┌──────────────────────────┐    │ │
+│                            │  │ File Processor            │    │ │
+│                            │  │ PDF/DOCX/TXT/Image/Video  │    │ │
+│                            │  └────────┬─────────────────┘    │ │
+│                            │           │                       │ │
+│                            │     ┌─────┴──────┐               │ │
+│                            │     │   Router    │               │ │
+│                            │     └──┬──┬───┬──┘               │ │
+│                            └────────┼──┼───┼──────────────────┘ │
+│                                     │  │   │                    │
+│  ┌──────────────────────────────────┼──┼───┼──────────────────┐ │
+│  │          NVIDIA NIM API Cloud    │  │   │                  │ │
+│  │                                  │  │   │                  │ │
+│  │  ┌───────────────┐  ┌──────────┐│  │   │┌───────────────┐ │ │
+│  │  │ Dracarys 70B  │  │ Kimi K2.5││  │   ││Nemotron 49B   │ │ │
+│  │  │ (Summarize)   │  │ (Vision) ││  │   ││(Notes/Flow/   │ │ │
+│  │  │               │  │          ││  │   ││ Exam)         │ │ │
+│  │  └───────────────┘  └──────────┘│  │   │└───────────────┘ │ │
+│  └──────────────────────────────────┘  │   │                  │ │
+└─────────────────────────────────────────────────────────────────┘
+```
 
-The system accepts **5 categories** of input, each processed differently:
+### Tri-Model Routing
 
-| Input Type | Extensions | Processing Method | Destination Model |
-|---|---|---|---|
-| **Raw Text** | *(textarea)* | Direct pass-through | Dracarys |
-| **Plain Text Files** | `.txt` | `file.read().decode('utf-8')` | Dracarys |
-| **PDF Documents** | `.pdf` | `PyPDF2.PdfReader` → page-by-page text extraction | Dracarys |
-| **Word Documents** | `.docx` | `python-docx` → paragraph iteration | Dracarys |
-| **Images** | `.png .jpg .jpeg .gif .webp` | Base64 encode → data URI | Kimi K2.5 |
-| **Video** | `.mp4 .webm` | Base64 encode → data URI | Kimi K2.5 |
-
-> [!IMPORTANT]
-> The routing decision is binary: if **any** media file (image/video) is present in the upload, the entire request is routed to **Kimi K2.5**. Otherwise, all extracted text goes to **Dracarys**.
+| Model | Role | When Used |
+|-------|------|-----------|
+| **Dracarys LLaMA 3.1 70B** (AbacusAI) | Text summarization | Summarize mode + text-only input |
+| **Kimi K2.5** (Moonshot AI) | Vision + multimodal analysis | Any input with images/video |
+| **Nemotron Super 49B v1.5** (NVIDIA) | Structured output generation | Notes / Flowchart / Exam Prep modes |
 
 ---
 
-### 2. 🧠 Dual-Model Routing — The Core Intelligence
+## 🚀 Quick Start
 
-This is the project's central architectural decision. Instead of using a single do-everything model, Lumina employs **task-specific model routing**:
+### Prerequisites
+- **Python 3.10+**
+- **Node.js 18+**
+- **NVIDIA NIM API keys** from [build.nvidia.com](https://build.nvidia.com)
 
-```mermaid
-graph LR
-    Input["Parsed Input"] --> Decision{"Has media<br/>attachments?"}
-    Decision -->|"No"| Dracarys["🐉 Dracarys LLaMA 3.1 70B<br/><i>Text Summarization Specialist</i>"]
-    Decision -->|"Yes"| Kimi["🌙 Kimi K2.5<br/><i>Multimodal Vision + Thinking</i>"]
-    
-    Dracarys --> Stream1["OpenAI SDK Streaming"]
-    Kimi --> Stream2["Raw SSE Streaming"]
-    
-    Stream1 --> Output["Streamed Response"]
-    Stream2 --> Output
+### 1. Clone & Install Backend
+
+```bash
+git clone https://github.com/Abhishe6611/Text-and-Image-Summerization.git
+cd Text-and-Image-Summerization
+
+pip install -r requirements.txt
 ```
 
-#### Model A: Dracarys LLaMA 3.1 70B Instruct
+### 2. Configure API Keys
 
-| Property | Detail |
-|---|---|
-| **Provider** | AbacusAI via NVIDIA NIM |
-| **Architecture** | LLaMA 3.1 70B (fine-tuned by AbacusAI) |
-| **Specialization** | Text comprehension & summarization |
-| **API Protocol** | OpenAI-compatible SDK (`openai` Python package) |
-| **Temperature** | `0.5` (balanced creativity & accuracy) |
-| **Max Tokens** | `1024` |
-| **Why this model?** | Fine-tuned specifically for instruction-following and text summarization tasks, making it more accurate than a generic LLM for condensing large text inputs. |
+Open `app.py` and replace the placeholder API keys:
 
-#### Model B: Kimi K2.5 (Moonshot AI)
+```python
+# Model 1: Dracarys (Text Summarization)
+text_client = OpenAI(
+    base_url="https://integrate.api.nvidia.com/v1",
+    api_key="YOUR_NVIDIA_API_KEY_HERE"
+)
 
-| Property | Detail |
-|---|---|
-| **Provider** | Moonshot AI via NVIDIA NIM |
-| **Architecture** | Multimodal transformer with vision encoder |
-| **Specialization** | Image understanding, video analysis, visual reasoning |
-| **API Protocol** | Raw HTTP with SSE (Server-Sent Events) |
-| **Temperature** | `1.0` (more creative descriptions) |
-| **Max Tokens** | `16384` (much higher — vision tasks produce longer outputs) |
-| **Thinking Mode** | `chat_template_kwargs: {thinking: True}` — enables chain-of-thought reasoning |
-| **Why this model?** | Natively processes images/video as base64 data URIs, supports extended thinking for deeper visual analysis. |
+# Model 2: Kimi K2.5 (Vision)
+KIMI_API_KEY = "YOUR_NVIDIA_API_KEY_HERE"
+
+# Model 3: Nemotron (Notes/Flowchart/Exam)
+nemotron_client = OpenAI(
+    base_url="https://integrate.api.nvidia.com/v1",
+    api_key="YOUR_NVIDIA_API_KEY_HERE"
+)
+```
+
+> **Getting API keys:** Sign up at [build.nvidia.com](https://build.nvidia.com), search for each model name, and generate a free API key.
+
+### 3. Install & Run Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+### 4. Run Backend
+
+```bash
+# From the project root
+python app.py
+```
+
+### 5. Open the App
+
+Navigate to **http://localhost:5173** in your browser.
 
 ---
 
-### 3. 🌊 Streaming Response Architecture
+## 📁 Project Structure
 
-Both models use **streaming** to deliver responses token-by-token rather than waiting for the full response. This is a critical UX technique:
-
-```mermaid
-graph LR
-    subgraph "Without Streaming"
-        W1["User waits 5-15s"] --> W2["Entire response<br/>appears at once"]
-    end
-    
-    subgraph "With Streaming ✅"
-        S1["First token in ~200ms"] --> S2["Text flows in<br/>word-by-word"] --> S3["User reads as<br/>it generates"]
-    end
 ```
-
-#### How Streaming Works in This Project
-
-**Dracarys (OpenAI SDK path):**
-```
-Client ←── Flask Generator (yield) ←── OpenAI SDK (stream=True) ←── NVIDIA API
-```
-- Uses the `openai` Python SDK with `stream=True`
-- Each `chunk.choices[0].delta.content` is yielded from a Python generator
-- Flask wraps the generator in a `Response(..., mimetype='text/plain')` — this triggers **HTTP chunked transfer encoding**
-
-**Kimi K2.5 (Raw SSE path):**
-```
-Client ←── Flask Generator (yield) ←── requests (stream=True) ←── SSE from NVIDIA
-```
-- Uses Python `requests` library with `stream=True`
-- Manually parses SSE format: lines beginning with `data: ` contain JSON chunks
-- Each JSON chunk's `choices[0].delta.content` is yielded
-- The stream ends when `data: [DONE]` is received
-
-**Frontend consumption:**
-- The browser's `Fetch API` with `response.body.getReader()` reads chunks via the **ReadableStream** interface
-- Each chunk is decoded with `TextDecoder`, appended to a running text buffer, and re-rendered as Markdown via `marked.parse()`
-
----
-
-### 4. 🎨 Frontend Architecture
-
-The frontend is a **single-file SPA** (`templates/index.html`) using the Jinja2 template engine, with all CSS and JS inlined.
-
-```mermaid
-graph TB
-    subgraph "UI Layer"
-        Header["Header<br/>(Model Badge + Title)"]
-        InputPanel["Input Panel<br/>(Textarea + File Upload)"]
-        OutputPanel["Output Panel<br/>(Streamed Result)"]
-        HistoryDrawer["History Drawer<br/>(localStorage)"]
-    end
-
-    subgraph "JS Engine"
-        FileHandler["handleFiles()<br/>classify & preview"]
-        Summarizer["summarizeText()<br/>FormData + Fetch"]
-        Exporter["exportFile()<br/>TXT / PDF / DOCX"]
-        HistoryMgr["History Manager<br/>localStorage CRUD"]
-        ModelSwitcher["switchModel()<br/>animated badge"]
-        ThinkingAnim["showThinking()<br/>animated states"]
-    end
-
-    subgraph "External Libraries"
-        Marked["marked.js<br/>(Markdown → HTML)"]
-        Html2Pdf["html2pdf.js<br/>(HTML → PDF export)"]
-        FontAwesome["Font Awesome 6<br/>(Icons)"]
-    end
-
-    InputPanel --> FileHandler
-    InputPanel --> Summarizer
-    Summarizer --> ModelSwitcher
-    Summarizer --> ThinkingAnim
-    OutputPanel --> Exporter
-    Exporter --> Html2Pdf
-    HistoryDrawer --> HistoryMgr
-```
-
-#### Design System: Warm Dark Claymorphism
-
-The UI uses a **claymorphism** design language — a soft, tactile aesthetic that combines:
-
-- **Outer shadows** (`8px 8px 16px dark, -8px -8px 16px light`) → Creates the "raised clay" 3D effect
-- **Inner shadows** (`inset 4px 4px 8px dark, inset -4px -4px 8px light`) → Creates "pressed in" wells for inputs
-- **Warm color palette** (`#1a1410` base, `#d4a24a` amber accent) → Gives the organic, earthy feel
-- **Animated background blobs** → Large radial gradients with blur and float animation
-
----
-
-## Key Concepts & Techniques
-
-### 🔑 1. Multimodal AI
-
-The system processes **multiple modalities** (text, images, video) through a unified interface. The key insight is that different modalities require different model architectures:
-- **Text** → Processed by a text-only transformer (more efficient, higher accuracy for summarization)
-- **Vision** → Requires a model with a **vision encoder** (ViT or similar) that converts pixel data into token embeddings the transformer can reason about
-
-### 🔑 2. API Gateway Pattern (NVIDIA NIM)
-
-Both models are accessed through **NVIDIA NIM** (NVIDIA Inference Microservices), which acts as a unified API gateway. This means:
-- Models run on NVIDIA's cloud GPUs (no local GPU required)
-- The API is OpenAI-compatible, allowing use of the standard `openai` Python SDK
-- Different providers (AbacusAI, Moonshot AI) are accessed through the same endpoint
-
-### 🔑 3. Server-Sent Events (SSE) Streaming
-
-The Kimi K2.5 model uses the **SSE protocol** — a standard for unidirectional server-to-client streaming:
-```
-data: {"choices": [{"delta": {"content": "Hello "}}]}
-data: {"choices": [{"delta": {"content": "world"}}]}
-data: [DONE]
-```
-Each line prefixed with `data: ` contains a JSON payload. The stream terminates with `data: [DONE]`.
-
-### 🔑 4. Chain-of-Thought (Thinking Mode)
-
-Kimi K2.5 is invoked with `"thinking": True`, which enables **chain-of-thought reasoning**. This means the model internally generates a reasoning trace before producing the final answer — particularly useful for complex visual analysis tasks like understanding charts, diagrams, or multi-object scenes.
-
-### 🔑 5. Chunked Transfer Encoding
-
-Flask's `Response(generator_function(), mimetype='text/plain')` automatically uses HTTP **chunked transfer encoding**. Instead of buffering the entire response, the server sends each `yield`ed piece immediately. The browser receives and displays each chunk as it arrives.
-
-### 🔑 6. Base64 Data URI Encoding
-
-Media files (images/video) are converted to **Base64 data URIs** for transmission to the vision model:
-```
-data:image/png;base64,iVBORw0KGgoAAAA...
-```
-This embeds the binary file data directly in the JSON payload, avoiding the need for separate file upload endpoints or object storage.
-
-### 🔑 7. Client-Side History (localStorage)
-
-Summarization history is persisted in the browser's `localStorage` — no database required. This is a **zero-infrastructure** persistence strategy:
-- Entries are capped at 50 (to prevent storage overflow)
-- Each entry stores: input text, output text, type (text/media), timestamp
-- History survives page refreshes but is browser-specific
-
-### 🔑 8. Multi-Format Export Pipeline
-
-Results can be exported in three formats, each using a different technique:
-
-| Format | Technique | Where it happens |
-|---|---|---|
-| **TXT** | `Blob` constructor + download link | Client-side only |
-| **PDF** | `html2pdf.js` (HTML → Canvas → PDF) | Client-side only |
-| **DOCX** | `python-docx` on server → binary download | Server-side (`/export_docx`) |
-
----
-
-## Technology Stack Summary
-
-```mermaid
-graph TB
-    subgraph "Frontend"
-        HTML["HTML5 + Jinja2"]
-        CSS["CSS3 (Claymorphism)"]
-        JS["Vanilla JavaScript"]
-        Libs["marked.js · html2pdf.js · Font Awesome"]
-    end
-
-    subgraph "Backend"
-        Flask["Flask 3.x"]
-        CORS["Flask-CORS"]
-        OpenAI["OpenAI Python SDK"]
-        Requests["Python Requests"]
-        PyPDF["PyPDF2"]
-        Docx["python-docx"]
-    end
-
-    subgraph "Cloud AI"
-        NIM["NVIDIA NIM API Gateway"]
-        Dracarys["Dracarys LLaMA 3.1 70B"]
-        Kimi["Kimi K2.5 (Vision)"]
-    end
-
-    Frontend --> Backend
-    Backend --> NIM
-    NIM --> Dracarys
-    NIM --> Kimi
+Text-and-Image-Summerization/
+├── app.py                    # Flask backend (routing, streaming, export)
+├── requirements.txt          # Python dependencies
+├── frontend/
+│   ├── src/
+│   │   ├── components/
+│   │   │   └── ui/
+│   │   │       └── ruixen-moon-chat.tsx   # Main UI component
+│   │   ├── App.tsx
+│   │   └── index.css         # Neobrutalist design system
+│   ├── package.json
+│   └── vite.config.ts
+├── templates/
+│   └── index.html            # Legacy Flask template (deprecated)
+├── architecture_flow.md      # Detailed architecture documentation
+└── README.md
 ```
 
 ---
 
-## Summary
+## 🔧 Tech Stack
 
-| Aspect | Implementation |
-|---|---|
-| **Architecture** | Monolithic Flask app with Jinja2 templating |
-| **AI Strategy** | Dual-model routing (text specialist + vision specialist) |
-| **Streaming** | Python generators → chunked HTTP → ReadableStream in browser |
-| **File Processing** | PyPDF2 (PDF), python-docx (DOCX), base64 (media) |
-| **UI Design** | Warm dark claymorphism with micro-animations |
-| **State Management** | localStorage for history, no database |
-| **Deployment** | Single `app.py` entry point, `flask run` on port 5000 |
+### Frontend
+| Technology | Purpose |
+|-----------|---------|
+| **React 18** + **TypeScript** | Component-based UI |
+| **Vite** | Fast dev server & build |
+| **shadcn/ui** | Base component primitives |
+| **Lucide Icons** | Icon system |
+| **React Markdown** | Markdown rendering |
+| **Mermaid.js** | Live flowchart diagrams |
+
+### Backend
+| Technology | Purpose |
+|-----------|---------|
+| **Flask 3.x** | HTTP server + API routes |
+| **Flask-CORS** | Cross-origin support |
+| **OpenAI SDK** | Dracarys & Nemotron streaming |
+| **Requests** | Kimi K2.5 raw SSE streaming |
+| **PyPDF2** | PDF text extraction |
+| **PyMuPDF (fitz)** | Scanned PDF → image conversion |
+| **python-docx** | DOCX reading & export |
+| **fpdf2** | PDF export generation |
+
+### AI Models (via NVIDIA NIM)
+| Model | Parameters | Use Case |
+|-------|-----------|----------|
+| `abacusai/dracarys-llama-3.1-70b-instruct` | 70B | Text summarization |
+| `moonshotai/kimi-k2.5` | — | Vision + reasoning |
+| `nvidia/llama-3.3-nemotron-super-49b-v1.5` | 49B | Structured output |
+
+---
+
+## 📋 API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/summarize` | POST | Main processing endpoint (accepts text, files, mode, difficulty) |
+| `/export_docx` | POST | Export summary as DOCX |
+| `/export_pdf` | POST | Export summary as PDF |
+| `/export_image_pdf` | POST | Export flowchart image as landscape PDF |
+
+---
+
+## 🎯 How It Works
+
+1. **User inputs** text or uploads files via the React frontend
+2. **Mode selection** determines which AI model and system prompt to use
+3. **Difficulty level** adjusts the complexity of the AI's output
+4. **Backend processes** files (extracts text from PDFs/DOCX, base64-encodes images)
+5. **Router decides** which model to call based on input type and mode
+6. **AI response streams** token-by-token back to the browser via chunked HTTP
+7. **Frontend renders** the response in real-time as Markdown (or as a Mermaid diagram for flowcharts)
+8. **User exports** the result as TXT/DOCX/PDF or PNG/PDF for flowcharts
+
+---
+
+## 📜 License
+
+This project is for educational and personal use.
+
+---
+
+## 🙏 Acknowledgments
+
+- **NVIDIA NIM** — Free-tier API access to state-of-the-art AI models
+- **AbacusAI** — Dracarys LLaMA 3.1 70B fine-tune
+- **Moonshot AI** — Kimi K2.5 multimodal model
+- **shadcn/ui** — Beautiful component primitives
