@@ -52,3 +52,4 @@ pnpm-debug.log*
 *.pptx
 *.tmp
 *.bak
+appcopy.py
