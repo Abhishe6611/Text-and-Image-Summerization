@@ -1,384 +1,802 @@
-# 🏗️ DOCUSUM — Architecture Flow & Technical Deep-Dive
+# Architecture Flow
 
-## Project Overview
-
-**DOCUSUM** is a multimodal AI document synthesizer built on a **Flask** backend and a **React + Vite + TypeScript** frontend. It intelligently routes user input across **three NVIDIA-hosted AI models** depending on content type and output mode, streaming the response back to the browser in real time.
-
-The system supports four output modes (Summarize, Notes, Flowchart, Exam Prep), three difficulty levels, and multi-format export — all wrapped in a bold **Neobrutalist** UI.
+## Text & Image Summarization Platform
 
 ---
 
-## High-Level Architecture
+# 1. Overview
 
-```mermaid
-graph TB
-    subgraph Frontend["🖥️ Frontend (React + Vite)"]
-        UI["Neobrutalist UI<br/>ruixen-moon-chat.tsx"]
-        JS["React State + Fetch API<br/>(FormData + ReadableStream)"]
-        MD["React Markdown<br/>+ Mermaid.js"]
-    end
+The Text & Image Summarization Platform is a multimodal AI application designed to process text documents, images, videos, and scanned PDFs and generate intelligent outputs such as:
 
-    subgraph Backend["⚙️ Flask Backend (app.py)"]
-        Router["Input Router<br/>/summarize endpoint"]
-        FP["File Processor<br/>(PDF, DOCX, TXT, Media)"]
-        TD["Text Pipeline<br/>stream_dracarys()"]
-        NP["Structured Pipeline<br/>stream_nemotron()"]
-        VD["Vision Pipeline<br/>stream_kimi()"]
-        EX["Export Engine<br/>/export_docx, /export_pdf<br/>/export_image_pdf"]
-    end
+* Text Summaries
+* Structured Study Notes
+* Mermaid Flowcharts
+* Exam Preparation Material
+* Image/Video Analysis Reports
 
-    subgraph NVIDIA["☁️ NVIDIA NIM API Cloud"]
-        M1["Dracarys LLaMA 3.1 70B<br/>(Text Summarization)"]
-        M2["Kimi K2.5<br/>(Vision + Thinking)"]
-        M3["Nemotron Super 49B v1.5<br/>(Notes / Flowchart / Exam)"]
-    end
+The application is implemented using **Flask**, **OpenAI-compatible NVIDIA NIM APIs**, **PyPDF2**, **PyMuPDF**, **FPDF**, and several document-processing libraries.
 
-    UI -->|"User Input<br/>(text + files + mode + difficulty)"| JS
-    JS -->|"POST /summarize<br/>(multipart/form-data)"| Router
-    Router --> FP
-    FP -->|"Text + mode=summarize"| TD
-    FP -->|"Text + mode=notes/flowchart/exam"| NP
-    FP -->|"Has images/video"| VD
-    TD -->|"OpenAI SDK<br/>streaming"| M1
-    NP -->|"OpenAI SDK<br/>streaming"| M3
-    VD -->|"Raw HTTP SSE<br/>streaming"| M2
-    M1 -->|"Token stream"| TD
-    M3 -->|"Token stream"| NP
-    M2 -->|"SSE chunks"| VD
-    TD -->|"Generator yield"| Router
-    NP -->|"Generator yield"| Router
-    VD -->|"Generator yield"| Router
-    Router -->|"Chunked HTTP<br/>text/plain"| JS
-    JS -->|"Parsed Markdown<br/>or Mermaid diagram"| MD
-    MD --> UI
+The architecture follows a modular request-processing pipeline consisting of:
+
+1. Client Layer
+2. Request Validation Layer
+3. Content Extraction Layer
+4. AI Processing Layer
+5. Streaming Response Layer
+6. Export Services Layer
+
+---
+
+# 2. High-Level Architecture
+
+```text
+┌─────────────────────┐
+│      User UI        │
+│ Browser / Frontend  │
+└──────────┬──────────┘
+           │ HTTP Request
+           ▼
+┌─────────────────────┐
+│     Flask App       │
+│      app.py         │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ Validation Layer    │
+│ Mode Validation     │
+│ File Validation     │
+│ Size Validation     │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ Content Extraction  │
+│ PDF Parser          │
+│ DOCX Parser         │
+│ Text Reader         │
+│ Media Converter     │
+└──────────┬──────────┘
+           │
+           ▼
+┌───────────────────────────────────┐
+│ AI Routing Engine                 │
+├───────────────────────────────────┤
+│ Text → Dracarys Model             │
+│ Notes → Nemotron Model            │
+│ Exam → Nemotron Model             │
+│ Flowchart → Nemotron Model        │
+│ Media → Kimi Vision Model         │
+└──────────┬────────────────────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ Streaming Engine    │
+│ Token Streaming     │
+│ SSE Processing      │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ Client Response     │
+└─────────────────────┘
 ```
 
 ---
 
-## End-to-End Data Flow
+# 3. Request Lifecycle
 
-### Step-by-Step Request Lifecycle
+## Step 1 — User Request
 
-```mermaid
-sequenceDiagram
-    participant U as 👤 User
-    participant FE as 🖥️ React Frontend
-    participant BE as ⚙️ Flask Server
-    participant NV as ☁️ NVIDIA NIM API
+The user submits one of the following:
 
-    U->>FE: Types text / drags & drops files
-    U->>FE: Selects mode (Summarize/Notes/Flowchart/Exam)
-    U->>FE: Selects difficulty (Simple/Intermediate/Advanced)
-    FE->>FE: Show "Thinking..." state
-    FE->>BE: POST /summarize (FormData: files + text + mode + difficulty)
-    BE->>BE: Parse & classify uploaded files
+* Raw Text
+* PDF Document
+* DOCX Document
+* Image File
+* Video File
 
-    alt Has Image/Video
-        BE->>BE: Base64-encode media
-        BE->>NV: Raw HTTP POST → Kimi K2.5 (SSE stream, thinking=True)
-        loop SSE events
-            NV-->>BE: data: {reasoning_content + content}
-            BE-->>FE: Yield reasoning + content
-            FE->>FE: Render thinking blockquote + content
-        end
-    else Mode = notes / flowchart / exam
-        BE->>NV: OpenAI SDK → Nemotron 49B (system prompt per mode)
-        loop Token-by-token
-            NV-->>BE: Delta token
-            BE-->>FE: Yield chunk
-            FE->>FE: Append + render Markdown / Mermaid
-        end
-    else Mode = summarize (text only)
-        BE->>NV: OpenAI SDK → Dracarys 70B (stream=True)
-        loop Token-by-token
-            NV-->>BE: Delta token
-            BE-->>FE: Yield chunk
-            FE->>FE: Append + render Markdown
-        end
-    end
+The request is sent to:
 
-    FE->>FE: Show "Done ✓" + stats (word count, reading time)
-    U->>FE: (Optional) Copy / Export as TXT / DOCX / PDF / PNG
+```http
+POST /summarize
 ```
 
 ---
 
-## Core Components
+## Step 2 — Rate Limiting
 
-### 1. 📥 Input Layer — File Processing
+Before any processing begins, Flask-Limiter evaluates the request.
 
-The system accepts **6 categories** of input, each processed differently:
+### Global Limits
 
-| Input Type | Extensions | Processing Method | Destination Model |
-|---|---|---|---|
-| **Raw Text** | *(textarea)* | Direct pass-through | Dracarys or Nemotron |
-| **Plain Text Files** | `.txt` | `file.read().decode('utf-8')` | Dracarys or Nemotron |
-| **PDF Documents** | `.pdf` | `PyPDF2.PdfReader` → text extraction | Dracarys or Nemotron |
-| **Scanned PDFs** | `.pdf` (no text) | `PyMuPDF` → page images → base64 | Kimi K2.5 |
-| **Word Documents** | `.docx` | `python-docx` → paragraph text | Dracarys or Nemotron |
-| **Images** | `.png .jpg .jpeg .gif .webp` | Base64 encode → data URI | Kimi K2.5 |
-| **Video** | `.mp4 .webm` | Base64 encode → data URI | Kimi K2.5 |
+```python
+200 requests/day
+50 requests/hour
+```
 
-> [!IMPORTANT]
-> **Routing priority:** If **any** media (image/video) is present → Kimi K2.5. Otherwise, the `mode` parameter determines: `summarize` → Dracarys, `notes/flowchart/exam` → Nemotron.
+### Endpoint Limit
+
+```python
+10 requests/minute
+```
+
+Purpose:
+
+* Prevent abuse
+* Protect AI APIs
+* Prevent denial-of-service attacks
 
 ---
 
-### 2. 🧠 Tri-Model Routing
+## Step 3 — Input Validation
 
-```mermaid
-graph TD
-    Input["Parsed Input<br/>(text + files + mode + difficulty)"] --> MediaCheck{"Has media<br/>attachments?"}
-    MediaCheck -->|"Yes"| Kimi["🌙 Kimi K2.5<br/>Vision + Thinking"]
-    MediaCheck -->|"No"| ModeCheck{"Output Mode?"}
-    ModeCheck -->|"summarize"| Dracarys["🐉 Dracarys 70B<br/>Text Summarization"]
-    ModeCheck -->|"notes / flowchart / exam"| Nemotron["⚡ Nemotron 49B v1.5<br/>Structured Output"]
+The application validates:
 
-    Dracarys --> StreamA["OpenAI SDK Streaming"]
-    Nemotron --> StreamB["OpenAI SDK Streaming"]
-    Kimi --> StreamC["Raw SSE Streaming"]
+### Mode
 
-    StreamA --> Output["Streamed Response<br/>to Frontend"]
-    StreamB --> Output
-    StreamC --> Output
+Allowed values:
+
+```python
+summarize
+notes
+flowchart
+exam
 ```
 
-#### Model A: Dracarys LLaMA 3.1 70B Instruct
+### Difficulty
 
-| Property | Detail |
-|---|---|
-| **Provider** | AbacusAI via NVIDIA NIM |
-| **Model ID** | `abacusai/dracarys-llama-3.1-70b-instruct` |
-| **Specialization** | Text comprehension & summarization |
-| **API Protocol** | OpenAI-compatible SDK |
-| **Temperature** | `0.5` |
-| **Max Tokens** | `1024` |
+Allowed values:
 
-#### Model B: Kimi K2.5 (Moonshot AI)
-
-| Property | Detail |
-|---|---|
-| **Provider** | Moonshot AI via NVIDIA NIM |
-| **Model ID** | `moonshotai/kimi-k2.5` |
-| **Specialization** | Image/video understanding, visual reasoning |
-| **API Protocol** | Raw HTTP with SSE |
-| **Temperature** | `1.0` |
-| **Max Tokens** | `16384` |
-| **Thinking Mode** | `chat_template_kwargs: {thinking: True}` |
-
-#### Model C: Nemotron Super 49B v1.5 (NVIDIA)
-
-| Property | Detail |
-|---|---|
-| **Provider** | NVIDIA |
-| **Model ID** | `nvidia/llama-3.3-nemotron-super-49b-v1.5` |
-| **Specialization** | Structured output — notes, Mermaid flowcharts, exam materials |
-| **API Protocol** | OpenAI-compatible SDK |
-| **Temperature** | `0.6` |
-| **Max Tokens** | `16384` |
-| **System Prompts** | Mode-specific prompts with difficulty level prefixes |
-
----
-
-### 3. 🎚️ Difficulty-Aware Prompting
-
-Each request includes a difficulty level that modifies the AI's system prompt:
-
-| Level | Behavior |
-|-------|----------|
-| **Simple** | "Use simple, easy-to-understand language suitable for beginners. Explain like teaching a 10th grader." |
-| **Intermediate** | "Use clear, standard academic language. Balance detail with readability." |
-| **Advanced** | "Use precise, technical language. Include in-depth analysis, edge cases, and expert-level detail." |
-
-The difficulty prefix is prepended to both the Dracarys summarization prompt and the Nemotron mode-specific system prompts.
-
----
-
-### 4. 🌊 Streaming Response Architecture
-
-All three models use **streaming** to deliver responses token-by-token:
-
-```mermaid
-graph LR
-    subgraph "Without Streaming"
-        W1["User waits 5-15s"] --> W2["Entire response<br/>appears at once"]
-    end
-
-    subgraph "With Streaming ✅"
-        S1["First token in ~200ms"] --> S2["Text flows in<br/>word-by-word"] --> S3["User reads as<br/>it generates"]
-    end
+```python
+simple
+intermediate
+advanced
 ```
 
-#### Streaming Paths
+Invalid values immediately return:
 
-**Dracarys & Nemotron (OpenAI SDK):**
-```
-Browser ←── Flask Generator (yield) ←── OpenAI SDK (stream=True) ←── NVIDIA API
-```
-
-**Kimi K2.5 (Raw SSE):**
-```
-Browser ←── Flask Generator (yield) ←── requests (stream=True) ←── SSE from NVIDIA
-```
-- Parses `reasoning_content` (thinking) and `content` (final answer) separately
-- Reasoning is formatted as markdown blockquotes (`> **Thinking Process...**`)
-
-**Frontend consumption:**
-- `Fetch API` + `ReadableStream` via `response.body.getReader()`
-- Each chunk decoded with `TextDecoder`, appended to state, re-rendered as Markdown
-- Auto-scroll keeps latest content visible during streaming
-
----
-
-### 5. 🎨 Frontend Architecture
-
-The frontend is a **React + TypeScript SPA** built with Vite, using shadcn/ui component primitives.
-
-```mermaid
-graph TB
-    subgraph "UI Components"
-        Header["Header Bar<br/>(DOCUSUM logo)"]
-        ModeToggle["Mode Toggle Bar<br/>(Summarize / Notes / Flowchart / Exam)"]
-        DifficultyBar["Difficulty Selector<br/>(Simple / Intermediate / Advanced)"]
-        InputPanel["Input Panel<br/>(Textarea + Drag & Drop)"]
-        OutputPanel["Output Panel<br/>(Streamed Result / Mermaid Diagram)"]
-        ExportBar["Export Bar<br/>(Copy / TXT / DOCX / PDF / PNG)"]
-        StatsBar["Stats Bar<br/>(Word Count + Reading Time)"]
-    end
-
-    subgraph "React State"
-        Message["message: string"]
-        Summary["summary: string"]
-        Mode["outputMode: enum"]
-        Difficulty["difficulty: enum"]
-        Files["selectedFiles: File[]"]
-        Phase["genPhase: thinking/generating/done"]
-    end
-
-    subgraph "Libraries"
-        ReactMD["React Markdown"]
-        MermaidJS["Mermaid.js<br/>(SVG flowcharts)"]
-        LucideIcons["Lucide Icons"]
-    end
-
-    InputPanel --> Message
-    ModeToggle --> Mode
-    DifficultyBar --> Difficulty
-    Message --> Summary
-    Summary --> OutputPanel
-    Summary --> StatsBar
-    OutputPanel --> ReactMD
-    OutputPanel --> MermaidJS
-    OutputPanel --> ExportBar
-```
-
-#### Design System: Neobrutalism
-
-| Element | Implementation |
-|---------|---------------|
-| **Borders** | `border-4 border-black` — thick, solid, unapologetic |
-| **Shadows** | `shadow-[6px_6px_0px_0px_#000]` — hard-offset, no blur |
-| **Colors** | Cyan `#00ffff`, Magenta `#ff00ff`, Yellow `#ffdf00`, Green `#39ff14` |
-| **Buttons** | Press-down effect: shadow collapses + translate on active |
-| **Background** | Dotted yellow grid pattern |
-| **Typography** | `font-black uppercase tracking-widest` |
-
----
-
-### 6. 📤 Multi-Format Export Pipeline
-
-| Format | How It Works | Endpoint |
-|--------|-------------|----------|
-| **TXT** | `Blob` constructor + download link | Client-side |
-| **DOCX** | `python-docx` → binary stream | `/export_docx` |
-| **PDF** (text) | `fpdf2` → binary stream | `/export_pdf` |
-| **PNG** (flowchart) | SVG → Canvas (2x scale) → PNG blob | Client-side |
-| **PDF** (flowchart) | SVG → Canvas → PNG → `fpdf2` landscape | `/export_image_pdf` |
-| **Copy** | `navigator.clipboard.writeText()` | Client-side |
-
----
-
-## Key Concepts & Techniques
-
-### 🔑 1. Multimodal AI
-Different input modalities require different model architectures:
-- **Text** → Text-only transformer (efficient, focused)
-- **Vision** → Model with vision encoder (ViT) that converts pixels to embeddings
-
-### 🔑 2. Task-Specific Model Routing
-Instead of one model for everything, DOCUSUM uses **three specialized models**, each optimized for its task. The router selects based on input type + output mode.
-
-### 🔑 3. Mode-Specific System Prompts
-Each output mode (Notes, Flowchart, Exam) has a carefully crafted system prompt that constrains the model's output format — e.g., forcing Mermaid syntax for flowcharts or structured Q&A for exam prep.
-
-### 🔑 4. API Gateway Pattern (NVIDIA NIM)
-All three models run on NVIDIA's cloud GPUs via NIM — no local GPU required. The API is OpenAI-compatible, allowing use of the standard Python SDK.
-
-### 🔑 5. Chunked Transfer Encoding
-Flask's `Response(generator, mimetype='text/plain')` triggers HTTP chunked encoding. Each `yield` sends data immediately — the browser sees tokens in real time.
-
-### 🔑 6. Chain-of-Thought (Kimi Thinking Mode)
-Kimi K2.5 with `thinking: True` generates internal reasoning traces before the final answer. These are streamed as blockquotes in the UI.
-
-### 🔑 7. Client-Side Diagram Rendering
-Flowchart mode generates Mermaid.js code server-side, which is then rendered as an interactive SVG diagram client-side — exportable as high-res PNG or PDF.
-
-### 🔑 8. Difficulty-Adaptive Prompting
-A difficulty prefix is injected into every system prompt, adjusting output complexity from beginner-friendly to expert-level without changing the underlying model.
-
----
-
-## Technology Stack
-
-```mermaid
-graph TB
-    subgraph "Frontend"
-        React["React 18 + TypeScript"]
-        Vite["Vite Dev Server"]
-        ShadCN["shadcn/ui Components"]
-        Mermaid["Mermaid.js"]
-        RMD["React Markdown"]
-        Lucide["Lucide Icons"]
-    end
-
-    subgraph "Backend"
-        Flask["Flask 3.x"]
-        CORS["Flask-CORS"]
-        OpenAI["OpenAI Python SDK"]
-        Requests["Python Requests"]
-        PyPDF["PyPDF2"]
-        Fitz["PyMuPDF (fitz)"]
-        Docx["python-docx"]
-        FPDF["fpdf2"]
-    end
-
-    subgraph "Cloud AI (NVIDIA NIM)"
-        NIM["API Gateway"]
-        Dracarys["Dracarys LLaMA 3.1 70B"]
-        Kimi["Kimi K2.5 Vision"]
-        Nemotron["Nemotron Super 49B v1.5"]
-    end
-
-    Frontend --> Backend
-    Backend --> NIM
-    NIM --> Dracarys
-    NIM --> Kimi
-    NIM --> Nemotron
+```json
+{
+  "success": false,
+  "error": "Invalid mode",
+  "status": 400
+}
 ```
 
 ---
 
-## Summary
+## Step 4 — Upload Validation
 
-| Aspect | Implementation |
-|---|---|
-| **Architecture** | Flask backend + React/Vite frontend (decoupled) |
-| **AI Strategy** | Tri-model routing (text + vision + structured output) |
-| **Output Modes** | Summarize, Notes, Flowchart, Exam Prep |
-| **Difficulty** | Simple / Intermediate / Advanced (prompt-level) |
-| **Streaming** | Python generators → chunked HTTP → ReadableStream |
-| **File Processing** | PyPDF2, PyMuPDF, python-docx, base64 encoding |
-| **UI Design** | Neobrutalism — bold borders, hard shadows, high contrast |
-| **Diagram Engine** | Mermaid.js (server generates code, client renders SVG) |
-| **Export** | TXT, DOCX, PDF (text), PNG/PDF (flowcharts) |
-| **Deployment** | `python app.py` (port 5000) + `npm run dev` (port 5173) |
+Maximum upload size:
+
+```python
+50 MB
+```
+
+Configured via:
+
+```python
+MAX_CONTENT_LENGTH
+```
+
+Oversized uploads trigger:
+
+```http
+413 Payload Too Large
+```
+
+Response:
+
+```json
+{
+  "success": false,
+  "error": "File too large"
+}
+```
+
+---
+
+# 4. Content Extraction Layer
+
+The extraction layer converts uploaded files into AI-consumable content.
+
+---
+
+## Text Files
+
+Supported:
+
+```text
+.txt
+```
+
+Processing:
+
+```python
+file.read().decode("utf-8")
+```
+
+Output:
+
+```python
+(text_content, [])
+```
+
+---
+
+## DOCX Files
+
+Supported:
+
+```text
+.docx
+```
+
+Processing:
+
+```python
+docx.Document()
+```
+
+Paragraphs are extracted and merged into a single text body.
+
+Output:
+
+```python
+(text_content, [])
+```
+
+---
+
+## PDF Files
+
+Supported:
+
+```text
+.pdf
+```
+
+### Scenario A — Text-Based PDF
+
+PyPDF2 extracts text.
+
+```python
+page.extract_text()
+```
+
+Output:
+
+```python
+(text_content, [])
+```
+
+---
+
+### Scenario B — Scanned PDF
+
+If no text is detected:
+
+1. PyMuPDF renders pages.
+2. Pages converted to PNG.
+3. Images encoded to Base64.
+4. Sent to Vision Model.
+
+Output:
+
+```python
+("", media_parts)
+```
+
+---
+
+## Image Files
+
+Supported:
+
+```text
+png
+jpg
+jpeg
+gif
+webp
+```
+
+Processing:
+
+```python
+Base64 Encoding
+```
+
+Output:
+
+```python
+media_parts
+```
+
+---
+
+## Video Files
+
+Supported:
+
+```text
+mp4
+webm
+```
+
+Processing:
+
+```python
+Base64 Encoding
+```
+
+Output:
+
+```python
+media_parts
+```
+
+---
+
+# 5. AI Routing Engine
+
+After extraction, the system decides which AI model should process the request.
+
+---
+
+## Route 1 — Media Analysis
+
+Condition:
+
+```python
+if media_parts:
+```
+
+Model:
+
+```python
+moonshotai/kimi-k2.5
+```
+
+Function:
+
+```python
+stream_kimi()
+```
+
+Capabilities:
+
+* Image Understanding
+* Video Analysis
+* OCR
+* Visual Reasoning
+* Caption Generation
+
+---
+
+## Route 2 — Structured Content Generation
+
+Condition:
+
+```python
+notes
+flowchart
+exam
+```
+
+Model:
+
+```python
+nvidia/llama-3.3-nemotron-super-49b-v1.5
+```
+
+Function:
+
+```python
+stream_nemotron()
+```
+
+Capabilities:
+
+* Study Notes
+* Exam Material
+* Flowcharts
+* Educational Content
+
+---
+
+## Route 3 — Standard Summarization
+
+Condition:
+
+```python
+mode == summarize
+```
+
+Model:
+
+```python
+abacusai/dracarys-llama-3.1-70b-instruct
+```
+
+Function:
+
+```python
+stream_dracarys()
+```
+
+Capabilities:
+
+* Text Summaries
+* Article Condensation
+* Report Summaries
+
+---
+
+# 6. Prompt Engineering Layer
+
+The application dynamically modifies prompts based on difficulty.
+
+---
+
+## Simple
+
+Target Audience:
+
+```text
+Beginners
+```
+
+Instruction:
+
+```text
+Explain like a 10th grader.
+Avoid jargon.
+```
+
+---
+
+## Intermediate
+
+Target Audience:
+
+```text
+College Students
+```
+
+Instruction:
+
+```text
+Balanced detail and readability.
+```
+
+---
+
+## Advanced
+
+Target Audience:
+
+```text
+Professionals
+```
+
+Instruction:
+
+```text
+Technical language
+Edge cases
+Expert-level detail
+```
+
+---
+
+# 7. Streaming Architecture
+
+Instead of waiting for full AI generation, responses are streamed.
+
+Benefits:
+
+* Faster perceived response time
+* Better UX
+* Lower timeout probability
+
+---
+
+## Dracarys Streaming
+
+Uses:
+
+```python
+OpenAI SDK
+```
+
+Pattern:
+
+```python
+stream=True
+```
+
+Data Flow:
+
+```text
+Model
+ ↓
+Token Chunk
+ ↓
+Yield
+ ↓
+Client
+```
+
+---
+
+## Nemotron Streaming
+
+Uses:
+
+```python
+OpenAI SDK Streaming
+```
+
+Returns:
+
+```text
+Notes
+Flowcharts
+Exam Content
+```
+
+Token-by-token.
+
+---
+
+## Kimi Streaming
+
+Uses:
+
+```python
+Server-Sent Events (SSE)
+```
+
+Data Flow:
+
+```text
+HTTP Stream
+ ↓
+JSON Chunks
+ ↓
+Reasoning Stream
+ ↓
+Final Output
+```
+
+Unique capability:
+
+```text
+Shows Thinking Process
+```
+
+before final answer generation.
+
+---
+
+# 8. Export Services
+
+The platform provides downloadable outputs.
+
+---
+
+## DOCX Export
+
+Endpoint:
+
+```http
+POST /export_docx
+```
+
+Library:
+
+```python
+python-docx
+```
+
+Output:
+
+```text
+summary.docx
+```
+
+---
+
+## PDF Export
+
+Endpoint:
+
+```http
+POST /export_pdf
+```
+
+Library:
+
+```python
+FPDF
+```
+
+Font:
+
+```python
+DejaVu Sans
+```
+
+Benefits:
+
+* Unicode support
+* Hindi support
+* Arabic support
+* Emoji support
+
+---
+
+## Flowchart PDF Export
+
+Endpoint:
+
+```http
+POST /export_image_pdf
+```
+
+Process:
+
+```text
+Image
+ ↓
+Temporary File
+ ↓
+PDF
+ ↓
+Download
+```
+
+Automatic cleanup prevents file leaks.
+
+---
+
+# 9. Logging System
+
+Every request generates logs.
+
+Example:
+
+```text
+summarize | mode=notes
+difficulty=advanced
+has_media=False
+text_len=5420
+```
+
+Benefits:
+
+* Monitoring
+* Debugging
+* Auditability
+
+---
+
+# 10. Health Monitoring
+
+Endpoint:
+
+```http
+GET /health
+```
+
+Response:
+
+```json
+{
+  "status": "ok",
+  "models": {
+    "text": "...",
+    "vision": "...",
+    "structured": "..."
+  }
+}
+```
+
+Used by:
+
+* Load balancers
+* Monitoring systems
+* Kubernetes probes
+* CI/CD validation
+
+---
+
+# 11. Security Features
+
+## File Size Restriction
+
+```python
+50 MB
+```
+
+---
+
+## Input Validation
+
+Mode validation
+
+Difficulty validation
+
+---
+
+## Uniform Error Responses
+
+Example:
+
+```json
+{
+  "success": false,
+  "error": "Unsupported file type",
+  "status": 400
+}
+```
+
+---
+
+## Rate Limiting
+
+Protects infrastructure from abuse.
+
+---
+
+## Temporary File Cleanup
+
+Guaranteed deletion via:
+
+```python
+finally:
+    os.unlink(tmp_path)
+```
+
+---
+
+# 12. Complete End-to-End Flow
+
+```text
+User Uploads File
+        │
+        ▼
+Flask Route (/summarize)
+        │
+        ▼
+Rate Limiter
+        │
+        ▼
+Input Validation
+        │
+        ▼
+Content Extraction
+        │
+        ▼
+AI Router
+ ┌──────┼───────────┐
+ │      │           │
+ ▼      ▼           ▼
+Dracarys Nemotron  Kimi
+ │        │         │
+ ▼        ▼         ▼
+Streaming Response
+        │
+        ▼
+User Receives Output
+        │
+        ▼
+Optional Export
+(DOCX / PDF)
+```
+
+# Conclusion
+
+The architecture follows a layered, modular design focused on scalability, maintainability, and security. The application separates validation, content extraction, AI inference, streaming delivery, and export generation into clearly defined responsibilities. Through rate limiting, structured error handling, health monitoring, and multimodal AI routing, the platform is suitable for both educational and production-oriented deployments.
