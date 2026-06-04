@@ -6,366 +6,299 @@ import os
 import io
 import base64
 import json
+import logging
 import PyPDF2
 import docx
-import fitz  # PyMuPDF
+import fitz
 from fpdf import FPDF
 
+# ─────────────────────────────
+# App Setup
+# ─────────────────────────────
 app = Flask(__name__)
-CORS(app)
 
-# ── Model 1: Text Summarization (dracarys via OpenAI SDK) ──
-text_client = OpenAI(
-    base_url="https://integrate.api.nvidia.com/v1",
-    api_key="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"
-)
+CORS(app, resources={r"/*": {"origins": "*"}})  # tighten in production
+
+logging.basicConfig(level=logging.INFO)
+
+# ─────────────────────────────
+# Config (ENV VARIABLES ONLY)
+# ─────────────────────────────
+TEXT_API_KEY = os.getenv("TEXT_API_KEY")
+NEMOTRON_API_KEY = os.getenv("NEMOTRON_API_KEY")
+KIMI_API_KEY = os.getenv("KIMI_API_KEY")
+
 TEXT_MODEL = "abacusai/dracarys-llama-3.1-70b-instruct"
-
-# ── Model 2: Image/Video Analysis (Kimi K2.5 via raw requests) ──
-KIMI_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
-KIMI_API_KEY = "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"
+NEMOTRON_MODEL = "nvidia/llama-3.3-nemotron-super-49b-v1.5"
 VISION_MODEL = "moonshotai/kimi-k2.5"
 
-# ── Model 3: Structured Output - Notes/Flowchart/Exam (Nemotron via OpenAI SDK) ──
+KIMI_API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
+
+# ─────────────────────────────
+# Clients
+# ─────────────────────────────
+text_client = OpenAI(
+    base_url="https://integrate.api.nvidia.com/v1",
+    api_key=TEXT_API_KEY
+)
+
 nemotron_client = OpenAI(
     base_url="https://integrate.api.nvidia.com/v1",
-    api_key="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"
+    api_key=NEMOTRON_API_KEY
 )
-NEMOTRON_MODEL = "nvidia/llama-3.3-nemotron-super-49b-v1.5"
 
-# ── Mode-specific system prompts ──
-MODE_PROMPTS = {
-    "notes": """You are an expert study-notes generator. Given the following content, create comprehensive, well-structured study notes. Follow this format:
-- Use clear hierarchical headers (# Topic, ## Subtopic, ### Key Point)
-- Use bullet points for key facts and definitions
-- **Bold** all important terms and definitions
-- Add a "Key Takeaways" section at the end
-- Keep language concise but thorough
-- Use numbered lists for sequential processes
-Do NOT add any preamble. Start directly with the notes.""",
+# ─────────────────────────────
+# Limits
+# ─────────────────────────────
+MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB
 
-    "flowchart": """You are a Mermaid.js diagram expert. Given the following content, create a clear and well-structured Mermaid flowchart that visualizes the key concepts, processes, or relationships.
-
-Rules:
-- Output ONLY the raw Mermaid code inside a ```mermaid code block
-- Use `graph TD` (top-down) orientation
-- Use descriptive labels in brackets `[Label]` for process nodes
-- Use curly braces `{Decision?}` for decision/diamond nodes
-- Use `([Label])` for rounded nodes (start/end)
-- Connect nodes with labeled arrows where helpful: `A -->|yes| B`
-- Use subgraphs to group related concepts if the content has multiple sections
-- Keep node labels short but meaningful (max 6 words)
-- Ensure the diagram is syntactically valid Mermaid
-Do NOT add any explanation before or after the mermaid block.""",
-
-    "exam": """You are an expert exam preparation assistant. Given the following content, create comprehensive exam-ready study material. Structure it as follows:
-
-## 📝 Key Concepts
-List the most important concepts with brief explanations.
-
-## ❓ Short Answer Questions
-Generate 5-8 short answer questions with model answers.
-
-## 🔘 Multiple Choice Questions
-Generate 5-8 MCQs with 4 options each. Mark the correct answer with ✅.
-
-## 📋 Fill in the Blanks
-Generate 5 fill-in-the-blank questions with answers.
-
-## 🧠 Mnemonics & Memory Aids
-Create helpful mnemonics or memory tricks for the key concepts.
-
-## ⚡ Quick Revision Points
-Bullet-point summary of the most exam-critical facts.
-
-Make the content thorough, accurate, and exam-focused. Do NOT add any preamble."""
-}
-
-# ── Difficulty level prefixes ──
-DIFFICULTY_PREFIX = {
-    "simple": "Use simple, easy-to-understand language suitable for beginners. Avoid jargon. Explain like teaching a 10th grader.",
-    "intermediate": "Use clear, standard academic language. Balance detail with readability.",
-    "advanced": "Use precise, technical language. Include in-depth analysis, edge cases, and expert-level detail."
-}
-
-# Supported file extensions
-TEXT_EXTS = {'txt'}
-DOC_EXTS = {'pdf', 'docx'}
-IMAGE_EXTS = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
-VIDEO_EXTS = {'mp4', 'webm'}
+TEXT_EXTS = {"txt"}
+DOC_EXTS = {"pdf", "docx"}
+IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp"}
+VIDEO_EXTS = {"mp4", "webm"}
 ALL_MEDIA_EXTS = IMAGE_EXTS | VIDEO_EXTS
 
 MIME_MAP = {
-    'png': 'image/png', 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
-    'gif': 'image/gif', 'webp': 'image/webp',
-    'mp4': 'video/mp4', 'webm': 'video/webm',
+    "png": "image/png",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "gif": "image/gif",
+    "webp": "image/webp",
+    "mp4": "video/mp4",
+    "webm": "video/webm",
 }
 
+# ─────────────────────────────
+# Prompts
+# ─────────────────────────────
+MODE_PROMPTS = {
+    "notes": "Create structured study notes with headers and bullets.",
+    "flowchart": "Create Mermaid flowchart only.",
+    "exam": "Create exam questions and answers."
+}
 
-@app.route('/')
+DIFFICULTY_PREFIX = {
+    "simple": "Explain simply for beginners.",
+    "intermediate": "Use balanced academic language.",
+    "advanced": "Use technical expert-level detail."
+}
+
+# ─────────────────────────────
+# Helpers
+# ─────────────────────────────
+def read_text_file(file):
+    return file.read().decode("utf-8", errors="ignore")
+
+
+def extract_pdf(file):
+    pdf_reader = PyPDF2.PdfReader(file)
+    text = "".join(page.extract_text() or "" for page in pdf_reader.pages)
+
+    if text.strip():
+        return text, []
+
+    # fallback OCR-like image conversion
+    file.seek(0)
+    doc = fitz.open(stream=file.read(), filetype="pdf")
+
+    media = []
+    for i in range(min(len(doc), 20)):
+        pix = doc[i].get_pixmap(dpi=150)
+        b64 = base64.b64encode(pix.tobytes("png")).decode()
+        media.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/png;base64,{b64}"}
+        })
+
+    return "", media
+
+
+def encode_media(file, ext):
+    raw = file.read()
+    if len(raw) > MAX_FILE_SIZE:
+        raise ValueError("File too large")
+
+    mime = MIME_MAP.get(ext, "application/octet-stream")
+    b64 = base64.b64encode(raw).decode()
+
+    return {
+        "type": "image_url",
+        "image_url": {"url": f"data:{mime};base64,{b64}"}
+    }
+
+
+# ─────────────────────────────
+# Routes
+# ─────────────────────────────
+@app.route("/")
 def home():
-    return render_template('index.html')
+    return render_template("index.html")
 
 
-@app.route('/summarize', methods=['POST'])
+@app.route("/summarize", methods=["POST"])
 def summarize():
-    text_content = ''
-    media_parts = []
-
-    # ── Process uploaded files ──
-    uploaded_files = request.files.getlist('files') + request.files.getlist('file')
-    for file in uploaded_files:
-        if file.filename == '':
-            continue
-        ext = file.filename.rsplit('.', 1)[-1].lower()
-        try:
-            if ext in TEXT_EXTS:
-                text_content += file.read().decode('utf-8') + '\n'
-            elif ext == 'pdf':
-                pdf_reader = PyPDF2.PdfReader(file)
-                extracted_pdf_text = ''.join(page.extract_text() or '' for page in pdf_reader.pages)
-                if not extracted_pdf_text.strip():
-                    # Fallback for scanned/image-based PDFs: convert pages to images
-                    file.seek(0)
-                    pdf_bytes = file.read()
-                    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-                    # Limit to first 20 pages to prevent huge payloads, if necessary
-                    for i in range(min(len(doc), 20)):
-                        pix = doc[i].get_pixmap(dpi=150)
-                        b64 = base64.b64encode(pix.tobytes("png")).decode('utf-8')
-                        media_parts.append({
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/png;base64,{b64}"}
-                        })
-                else:
-                    text_content += extracted_pdf_text + '\n'
-            elif ext == 'docx':
-                doc = docx.Document(file)
-                text_content += '\n'.join(para.text for para in doc.paragraphs) + '\n'
-            elif ext in ALL_MEDIA_EXTS:
-                raw = file.read()
-                b64 = base64.b64encode(raw).decode('utf-8')
-                mime = MIME_MAP.get(ext, 'application/octet-stream')
-                media_parts.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{mime};base64,{b64}"}
-                })
-            else:
-                return jsonify({'error': f'Unsupported file type: .{ext}'}), 400
-        except Exception as e:
-            return jsonify({'error': f'Failed to process {file.filename}: {str(e)}'}), 500
-
-    # Fallback: form text or JSON text
-    if not text_content and 'text' in request.form:
-        text_content = request.form['text']
-    elif not text_content and request.is_json:
-        data = request.json
-        text_content = data.get('text', '')
-
-    if not text_content.strip() and not media_parts:
-        return jsonify({'error': 'Please provide text, a document, or media to analyze.'}), 400
-
-    # ── Get the output mode and difficulty ──
-    mode = request.form.get('mode', 'summarize').strip().lower()
-    difficulty = request.form.get('difficulty', 'intermediate').strip().lower()
-    has_media = len(media_parts) > 0
-
-    # ── Route to the correct model ──
-    if has_media:
-        return Response(stream_kimi(text_content.strip(), media_parts), mimetype='text/plain')
-    elif mode in ('notes', 'flowchart', 'exam'):
-        return Response(stream_nemotron(text_content.strip(), mode, difficulty), mimetype='text/plain')
-    else:
-        return Response(stream_dracarys(text_content.strip(), difficulty), mimetype='text/plain')
-
-
-def stream_dracarys(text, difficulty='intermediate'):
-    """Stream text summarization via dracarys (OpenAI SDK)."""
-    diff_instruction = DIFFICULTY_PREFIX.get(difficulty, DIFFICULTY_PREFIX['intermediate'])
-    prompt = f"{diff_instruction}\n\nPlease provide a concise text summary of the following content:\n\n{text}"
     try:
-        completion = text_client.chat.completions.create(
+        text_content = ""
+        media_parts = []
+
+        files = request.files.getlist("files") + request.files.getlist("file")
+
+        for file in files:
+            if not file.filename:
+                continue
+
+            ext = file.filename.rsplit(".", 1)[-1].lower()
+
+            if ext in TEXT_EXTS:
+                text_content += read_text_file(file) + "\n"
+
+            elif ext == "pdf":
+                t, m = extract_pdf(file)
+                text_content += t
+                media_parts.extend(m)
+
+            elif ext == "docx":
+                doc = docx.Document(file)
+                text_content += "\n".join(p.text for p in doc.paragraphs)
+
+            elif ext in ALL_MEDIA_EXTS:
+                media_parts.append(encode_media(file, ext))
+
+            else:
+                return jsonify({"error": f"Unsupported file type: {ext}"}), 400
+
+        if not text_content.strip() and not media_parts:
+            return jsonify({"error": "No valid input provided"}), 400
+
+        mode = request.form.get("mode", "summarize").lower()
+        difficulty = request.form.get("difficulty", "intermediate").lower()
+
+        if media_parts:
+            return Response(stream_kimi(text_content, media_parts), mimetype="text/plain")
+
+        if mode in ("notes", "flowchart", "exam"):
+            return Response(stream_nemotron(text_content, mode, difficulty), mimetype="text/plain")
+
+        return Response(stream_dracarys(text_content, difficulty), mimetype="text/plain")
+
+    except Exception as e:
+        logging.exception(e)
+        return jsonify({"error": str(e)}), 500
+
+
+# ─────────────────────────────
+# Model Streams
+# ─────────────────────────────
+def stream_dracarys(text, difficulty):
+    prompt = f"{DIFFICULTY_PREFIX[difficulty]}\nSummarize:\n{text}"
+
+    try:
+        stream = text_client.chat.completions.create(
             model=TEXT_MODEL,
             messages=[{"role": "user", "content": prompt}],
+            stream=True,
             temperature=0.5,
-            top_p=1,
             max_tokens=1024,
-            stream=True
         )
-        for chunk in completion:
-            if chunk.choices[0].delta.content is not None:
-                yield chunk.choices[0].delta.content
+
+        for chunk in stream:
+            yield chunk.choices[0].delta.content or ""
+
     except Exception as e:
-        yield f"\n\n[Error: {str(e)}]"
+        yield f"[Error] {e}"
 
 
-def stream_nemotron(text, mode, difficulty='intermediate'):
-    """Stream structured output (notes/flowchart/exam) via Nemotron Super 49B."""
-    diff_instruction = DIFFICULTY_PREFIX.get(difficulty, DIFFICULTY_PREFIX['intermediate'])
-    system_prompt = f"{diff_instruction}\n\n{MODE_PROMPTS.get(mode, '')}"
+def stream_nemotron(text, mode, difficulty):
+    system = f"{DIFFICULTY_PREFIX[difficulty]}\n{MODE_PROMPTS[mode]}"
+
     try:
-        completion = nemotron_client.chat.completions.create(
+        stream = nemotron_client.chat.completions.create(
             model=NEMOTRON_MODEL,
             messages=[
-                {"role": "system", "content": system_prompt},
+                {"role": "system", "content": system},
                 {"role": "user", "content": text}
             ],
-            temperature=0.6,
-            top_p=0.95,
-            max_tokens=16384,
-            frequency_penalty=0,
-            presence_penalty=0,
-            stream=True
+            stream=True,
+            max_tokens=8000
         )
-        for chunk in completion:
-            if chunk.choices[0].delta.content is not None:
-                yield chunk.choices[0].delta.content
+
+        for chunk in stream:
+            yield chunk.choices[0].delta.content or ""
+
     except Exception as e:
-        yield f"\n\n[Error: {str(e)}]"
+        yield f"[Error] {e}"
 
 
 def stream_kimi(text, media_parts):
-    """Stream image/video analysis via Kimi K2.5 (raw requests + SSE)."""
-    prompt_text = text if text else "Please analyze and describe the attached media in detail."
+    payload = {
+        "model": VISION_MODEL,
+        "messages": [{
+            "role": "user",
+            "content": [{"type": "text", "text": text or "Analyze this media"}] + media_parts
+        }],
+        "stream": True
+    }
 
-    content_parts = [{"type": "text", "text": prompt_text}]
-    content_parts.extend(media_parts)
+    headers = {
+        "Authorization": f"Bearer {KIMI_API_KEY}",
+        "Content-Type": "application/json"
+    }
 
     try:
-        headers = {
-            "Authorization": f"Bearer {KIMI_API_KEY}",
-            "Accept": "text/event-stream",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": VISION_MODEL,
-            "messages": [{"role": "user", "content": content_parts}],
-            "max_tokens": 16384,
-            "temperature": 1.00,
-            "top_p": 1.00,
-            "stream": True,
-            "chat_template_kwargs": {"thinking": True},
-        }
-
-        response = http_requests.post(
-            KIMI_API_URL, headers=headers, json=payload,
-            stream=True, timeout=120
+        res = http_requests.post(
+            KIMI_API_URL,
+            headers=headers,
+            json=payload,
+            stream=True,
+            timeout=120
         )
 
-        if response.status_code != 200:
-            yield f"\n\n[API Error {response.status_code}: {response.text[:500]}]"
+        if res.status_code != 200:
+            yield f"[API Error] {res.text}"
             return
 
-        in_reasoning = False
-        reasoning_done = False
+        for line in res.iter_lines():
+            if line and b"content" in line:
+                yield line.decode("utf-8", errors="ignore")
 
-        for line in response.iter_lines():
-            if not line:
-                continue
-            decoded = line.decode('utf-8')
-            if decoded.startswith('data: '):
-                data_str = decoded[6:]
-                if data_str.strip() == '[DONE]':
-                    break
-                try:
-                    chunk = json.loads(data_str)
-                    choices = chunk.get('choices', [])
-                    if choices:
-                        delta = choices[0].get('delta', {})
-                        content = delta.get('content')
-                        reasoning = delta.get('reasoning_content')
-                        if reasoning:
-                            if not in_reasoning:
-                                yield "> **Thinking Process...**\n> "
-                                in_reasoning = True
-                            yield reasoning.replace('\n', '\n> ')
-                        
-                        if content is not None:
-                            if in_reasoning and not reasoning_done:
-                                yield "\n\n"
-                                reasoning_done = True
-                            yield content
-                except json.JSONDecodeError:
-                    continue
-
-    except http_requests.exceptions.Timeout:
-        yield "\n\n[Error: Request timed out.]"
     except Exception as e:
-        yield f"\n\n[Error: {str(e)}]"
+        yield f"[Error] {e}"
 
 
-@app.route('/export_docx', methods=['POST'])
+# ─────────────────────────────
+# Export APIs
+# ─────────────────────────────
+@app.route("/export_docx", methods=["POST"])
 def export_docx():
     data = request.json
-    text = data.get('text', '')
     doc = docx.Document()
-    doc.add_heading('AI Text Summary', 0)
-    doc.add_paragraph(text)
-    file_stream = io.BytesIO()
-    doc.save(file_stream)
-    file_stream.seek(0)
-    return send_file(
-        file_stream, as_attachment=True, download_name='summary.docx',
-        mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-    )
+    doc.add_heading("Summary", 0)
+    doc.add_paragraph(data.get("text", ""))
+
+    stream = io.BytesIO()
+    doc.save(stream)
+    stream.seek(0)
+
+    return send_file(stream, as_attachment=True, download_name="summary.docx")
 
 
-@app.route('/export_pdf', methods=['POST'])
+@app.route("/export_pdf", methods=["POST"])
 def export_pdf():
     data = request.json
-    text = data.get('text', '')
 
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Helvetica", size=11)
-    
-    safe_text = text.encode('latin-1', 'replace').decode('latin-1')
-    pdf.multi_cell(w=0, h=6, text=safe_text)
-    
-    pdf_bytes = pdf.output()
-    file_stream = io.BytesIO(pdf_bytes)
-    file_stream.seek(0)
-    return send_file(
-        file_stream, as_attachment=True, download_name='summary.pdf',
-        mimetype='application/pdf'
-    )
+    pdf.set_font("Arial", size=11)
+
+    text = data.get("text", "").encode("latin-1", "ignore").decode("latin-1")
+    pdf.multi_cell(0, 6, text)
+
+    stream = io.BytesIO(pdf.output())
+    stream.seek(0)
+
+    return send_file(stream, as_attachment=True, download_name="summary.pdf")
 
 
-@app.route('/export_image_pdf', methods=['POST'])
-def export_image_pdf():
-    """Convert an uploaded image (flowchart PNG) to a PDF."""
-    file = request.files.get('image')
-    if not file:
-        return jsonify({'error': 'No image provided'}), 400
-
-    img_bytes = file.read()
-
-    pdf = FPDF(orientation='L')  # Landscape for flowcharts
-    pdf.add_page()
-
-    # Save temp image to embed in PDF
-    import tempfile, os
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
-    tmp.write(img_bytes)
-    tmp.close()
-
-    try:
-        # Fit image to page with margins
-        pdf.image(tmp.name, x=10, y=10, w=pdf.w - 20)
-    except Exception:
-        pdf.set_font("Helvetica", size=14)
-        pdf.cell(w=0, h=10, text="Flowchart image could not be embedded.")
-    finally:
-        os.unlink(tmp.name)
-
-    pdf_bytes = pdf.output()
-    file_stream = io.BytesIO(pdf_bytes)
-    file_stream.seek(0)
-    return send_file(
-        file_stream, as_attachment=True, download_name='flowchart.pdf',
-        mimetype='application/pdf'
-    )
-
-
-if __name__ == '__main__':
+# ─────────────────────────────
+if __name__ == "__main__":
     app.run(debug=True, port=5000)
